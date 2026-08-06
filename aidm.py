@@ -5,7 +5,12 @@ import sys
 from urllib.parse import urlparse
 
 from detector import is_youtube_url, looks_like_direct_file
-from downloader import download_direct, download_with_ytdlp
+from downloader import (
+    download_direct,
+    download_stream,
+    download_with_ytdlp,
+)
+from stream_parser import detect_stream_type, parse_stream_input
 from youtube import download_youtube
 
 
@@ -16,25 +21,34 @@ def main() -> int:
 
     parser.add_argument(
         "url",
-        help="Direct download link or supported website URL",
+        help="Direct link, website URL, or captured stream input",
     )
 
     args = parser.parse_args()
-    url = args.url.strip()
 
-    parsed = urlparse(url)
+    stream = parse_stream_input(args.url)
+    parsed_url = urlparse(stream.url)
 
-    if parsed.scheme not in {"http", "https"}:
+    if parsed_url.scheme not in {"http", "https"}:
         print("Error: only HTTP and HTTPS URLs are supported.")
         return 2
 
-    if is_youtube_url(url):
-        return download_youtube(url)
+    if is_youtube_url(stream.url):
+        return download_youtube(stream.url)
 
-    if looks_like_direct_file(url):
-        return download_direct(url)
+    stream.stream_type = detect_stream_type(stream)
 
-    return download_with_ytdlp(url)
+    if stream.stream_type in {"hls", "dash"}:
+        return download_stream(stream)
+
+    if stream.stream_type == "vtt":
+        print("Detected a WebVTT subtitle stream, not the main video.")
+        return 3
+
+    if looks_like_direct_file(stream.url):
+        return download_direct(stream.url)
+
+    return download_with_ytdlp(stream.url)
 
 
 if __name__ == "__main__":

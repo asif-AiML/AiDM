@@ -1,5 +1,5 @@
+from stream_parser import StreamInput
 from utils import run_command
-
 
 ARIA2_DOWNLOADER_ARGUMENTS = "aria2c:-x 8 -s 8 -k 1M"
 
@@ -37,5 +37,27 @@ def download_with_ytdlp(url: str) -> int:
         ARIA2_DOWNLOADER_ARGUMENTS,
         url,
     ]
+
+    return run_command(command)
+
+
+def download_stream(stream: StreamInput) -> int:
+    print(f"Input type: {stream.stream_type.upper()} stream")
+    print("Extractor/downloader: yt-dlp native")
+    print("Post-processing: FFmpeg when required")
+
+    command = [
+        "yt-dlp",
+        "--downloader",
+        "dash,m3u8:native",
+    ]
+
+    for header_name, header_value in stream.headers.items():
+        command.extend([
+            "--add-header",
+            f"{header_name}:{header_value}",
+        ])
+
+    command.append(stream.url)
 
     return run_command(command)
