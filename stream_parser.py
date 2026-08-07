@@ -103,7 +103,7 @@ def detect_stream_type(stream: StreamInput) -> str | None:
         TimeoutError,
     ) as error:
         print(f"Stream probe failed: {error}")
-        return None
+        return "unknown"
 
     if content_type in HLS_CONTENT_TYPES:
         return "hls"
