@@ -22,7 +22,11 @@ def download_direct(url: str) -> int:
     return run_command(command)
 
 
-def download_with_ytdlp(url: str, title: str | None = None) -> int:
+def download_with_ytdlp(
+    url: str,
+    title: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> int:
     print("Input type: supported website/media URL")
     print("Extractor: yt-dlp")
     print("Download engine: aria2c where supported")
@@ -37,6 +41,14 @@ def download_with_ytdlp(url: str, title: str | None = None) -> int:
             "-o",
             f"{safe_title}.%(ext)s",
         ])
+
+
+    if headers:
+        for header_name, header_value in headers.items():
+            command.extend([
+                "--add-header",
+                f"{header_name}:{header_value}",
+            ])
 
     command.extend([
         "--downloader",
