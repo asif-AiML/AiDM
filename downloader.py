@@ -64,13 +64,17 @@ def download_with_ytdlp(
     return run_command(command)
 
 
-def download_stream(stream: StreamInput) -> int:
+def download_stream(stream: StreamInput, title: str) -> int:
     print(f"Input type: {stream.stream_type.upper()} stream")
     print("Extractor/downloader: yt-dlp native")
     print("Post-processing: FFmpeg when required")
 
+    safe_title = sanitize_filename(title)
+
     command = [
         "yt-dlp",
+        "-o",
+        f"{safe_title}.%(ext)s",
         "--downloader",
         "dash,m3u8:native",
     ]
