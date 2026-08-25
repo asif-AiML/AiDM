@@ -28,8 +28,7 @@ def choose_youtube_mode() -> str:
         print("Invalid option. Enter 1, 2 or 3.")
 
 
-def build_youtube_command() -> list[str]:
-    return [
+def build_youtube_command(total_videos: int) -> list[str]:    return [
         "yt-dlp",
         "--downloader",
         "aria2c",
@@ -37,6 +36,10 @@ def build_youtube_command() -> list[str]:
         "dash,m3u8:native",
         "--downloader-args",
         ARIA2_DOWNLOADER_ARGUMENTS,
+        "--print",
+        f"before_dl:[%(video_autonumber)d/{total_videos}] Starting download: %(title)s",
+        "--no-quiet",
+        "--progress",
     ]
 
 
@@ -45,7 +48,7 @@ def download_youtube_video(urls: list[str]) -> int:
     print("Extractor: yt-dlp")
     print("Download engine: aria2c where supported")
 
-    command = build_youtube_command()
+    command = build_youtube_command(len(urls))
 
     command.extend([
         "-f",
@@ -63,7 +66,7 @@ def download_youtube_audio(urls: list[str]) -> int:
     print("Download engine: aria2c where supported")
     print("Output: original best available audio")
 
-    command = build_youtube_command()
+    command = build_youtube_command(len(urls))
 
     command.extend([
         "-f",
@@ -81,7 +84,7 @@ def download_youtube_audio_wav(urls: list[str]) -> int:
     print("Download engine: aria2c where supported")
     print("Conversion: FFmpeg → WAV")
 
-    command = build_youtube_command()
+    command = build_youtube_command(len(urls))
 
     command.extend([
         "-f",
@@ -100,9 +103,24 @@ def download_youtube(urls: list[str]) -> int:
     mode = choose_youtube_mode()
 
     if mode == "video":
-        return download_youtube_video(urls)
+        result = download_youtube_video(urls)
 
-    if mode == "audio":
-        return download_youtube_audio(urls)
+    elif mode == "audio":
+        result = download_youtube_audio(urls)
 
-    return download_youtube_audio_wav(urls)
+    else:
+        result = download_youtube_audio_wav(urls)
+
+    if result == 0:
+        total = len(urls)
+        download_word = "download" if total == 1 else "downloads"
+
+        print(
+            f"\n{total} YouTube {download_word} completed successfully 🎉💫"
+        )
+    else:
+        print(
+            f"\nBulk download finished with errors ⚠️"
+            "\nSome items may have completed successfully."
+        )
+    return result

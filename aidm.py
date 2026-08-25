@@ -42,7 +42,7 @@ def main() -> int:
             for url in args.urls
         ]
 
-        print(f"Detected {len(youtube_urls)} YouTube URLs.")
+        print(f"{len(youtube_urls)} YouTube URLs detected.✅")
         return download_youtube(youtube_urls)
 
     raw_input = args.urls[0]
