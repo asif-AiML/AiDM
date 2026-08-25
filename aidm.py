@@ -20,13 +20,24 @@ def main() -> int:
     )
 
     parser.add_argument(
-        "url",
-        help="Direct link, website URL, or captured stream input",
+        "urls",
+        nargs="+",
+        help="One or more direct links, website URLs, or captured stream inputs",
     )
 
     args = parser.parse_args()
 
-    stream = parse_stream_input(args.url)
+    if len(args.urls) > 1:
+        if not all(is_youtube_url(url) for url in args.urls):
+            print("Error: bulk mode currently supports YouTube URLs only.")
+            return 2
+
+        print(f"Detected {len(args.urls)} YouTube URLs.")
+        return download_youtube(args.urls)
+
+    raw_input = args.urls[0]
+
+    stream = parse_stream_input(raw_input)
     parsed_url = urlparse(stream.url)
 
     if parsed_url.scheme not in {"http", "https"}:
@@ -34,7 +45,7 @@ def main() -> int:
         return 2
 
     if is_youtube_url(stream.url):
-        return download_youtube(stream.url)
+        return download_youtube([stream.url])
 
     stream.stream_type = detect_stream_type(stream)
 

@@ -40,7 +40,7 @@ def build_youtube_command() -> list[str]:
     ]
 
 
-def download_youtube_video(url: str) -> int:
+def download_youtube_video(urls: list[str]) -> int:
     print("Mode: YouTube video")
     print("Extractor: yt-dlp")
     print("Download engine: aria2c where supported")
@@ -50,13 +50,14 @@ def download_youtube_video(url: str) -> int:
     command.extend([
         "-f",
         YOUTUBE_VIDEO_FORMAT,
-        url,
     ])
+
+    command.extend(urls)
 
     return run_command(command)
 
 
-def download_youtube_audio(url: str) -> int:
+def download_youtube_audio(urls: list[str]) -> int:
     print("Mode: YouTube audio")
     print("Extractor: yt-dlp")
     print("Download engine: aria2c where supported")
@@ -67,13 +68,14 @@ def download_youtube_audio(url: str) -> int:
     command.extend([
         "-f",
         "bestaudio/best",
-        url,
     ])
+
+    command.extend(urls)
 
     return run_command(command)
 
 
-def download_youtube_audio_wav(url: str) -> int:
+def download_youtube_audio_wav(urls: list[str]) -> int:
     print("Mode: YouTube audio")
     print("Extractor: yt-dlp")
     print("Download engine: aria2c where supported")
@@ -87,19 +89,20 @@ def download_youtube_audio_wav(url: str) -> int:
         "--extract-audio",
         "--audio-format",
         "wav",
-        url,
     ])
+
+    command.extend(urls)
 
     return run_command(command)
 
 
-def download_youtube(url: str) -> int:
+def download_youtube(urls: list[str]) -> int:
     mode = choose_youtube_mode()
 
     if mode == "video":
-        return download_youtube_video(url)
+        return download_youtube_video(urls)
 
     if mode == "audio":
-        return download_youtube_audio(url)
+        return download_youtube_audio(urls)
 
-    return download_youtube_audio_wav(url)
+    return download_youtube_audio_wav(urls)
