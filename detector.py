@@ -1,8 +1,7 @@
 import urllib.error
 import urllib.request
 from pathlib import Path
-from urllib.parse import urlparse
-
+from urllib.parse import parse_qs, urlparse
 
 DIRECT_EXTENSIONS = {
     ".zip",
@@ -50,6 +49,31 @@ def is_youtube_url(url: str) -> bool:
         or hostname == "youtu.be"
         or hostname.endswith(".youtu.be")
     )
+
+def normalize_youtube_video_url(url: str) -> str:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+
+    if (
+        hostname == "youtube.com"
+        or hostname.endswith(".youtube.com")
+    ):
+        if parsed.path == "/watch":
+            video_id = parse_qs(parsed.query).get("v", [None])[0]
+
+            if video_id:
+                return f"https://www.youtube.com/watch?v={video_id}"
+
+    if (
+        hostname == "youtu.be"
+        or hostname.endswith(".youtu.be")
+    ):
+        video_id = parsed.path.strip("/")
+
+        if video_id:
+            return f"https://youtu.be/{video_id}"
+
+    return url
 
 
 def looks_like_direct_file(url: str) -> bool:

@@ -4,7 +4,12 @@ import argparse
 import sys
 from urllib.parse import urlparse
 
-from detector import is_youtube_url, looks_like_direct_file
+from detector import (
+    is_youtube_url,
+    looks_like_direct_file,
+    normalize_youtube_video_url,
+)
+
 from downloader import (
     download_direct,
     download_stream,
@@ -32,8 +37,13 @@ def main() -> int:
             print("Error: bulk mode currently supports YouTube URLs only.")
             return 2
 
-        print(f"Detected {len(args.urls)} YouTube URLs.")
-        return download_youtube(args.urls)
+        youtube_urls = [
+            normalize_youtube_video_url(url)
+            for url in args.urls
+        ]
+
+        print(f"Detected {len(youtube_urls)} YouTube URLs.")
+        return download_youtube(youtube_urls)
 
     raw_input = args.urls[0]
 
@@ -45,7 +55,8 @@ def main() -> int:
         return 2
 
     if is_youtube_url(stream.url):
-        return download_youtube([stream.url])
+        youtube_url = normalize_youtube_video_url(stream.url)
+        return download_youtube([youtube_url])
 
     stream.stream_type = detect_stream_type(stream)
 
