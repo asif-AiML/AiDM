@@ -1,3 +1,6 @@
+import json
+import subprocess
+
 from downloader import ARIA2_DOWNLOADER_ARGUMENTS
 from utils import run_command
 
@@ -5,6 +8,98 @@ from utils import run_command
 YOUTUBE_VIDEO_FORMAT = (
     "bv*[vcodec^=vp09]+ba[acodec=opus]/bv*+ba/b"
 )
+
+
+def get_available_youtube_qualities(url: str) -> list[int]:
+    command = [
+        "yt-dlp",
+        "--dump-single-json",
+        "--skip-download",
+        "--playlist-items",
+        "1",
+        url,
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        print(f"Warning: could not discover YouTube qualities: {error}")
+        return []
+
+    if result.returncode != 0:
+        print("Warning: yt-dlp could not discover YouTube qualities.")
+        return []
+
+    try:
+        metadata = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        print("Warning: yt-dlp returned invalid quality metadata.")
+        return []
+
+    if not isinstance(metadata, dict):
+        print("Warning: yt-dlp returned invalid quality metadata.")
+        return []
+
+    entries = metadata.get("entries") or [metadata]
+    heights = {
+        format_info.get("height")
+        for entry in entries
+        if isinstance(entry, dict)
+        for format_info in entry.get("formats") or []
+        if isinstance(format_info, dict)
+        and format_info.get("vcodec") not in {None, "none"}
+        and isinstance(format_info.get("height"), int)
+        and not isinstance(format_info.get("height"), bool)
+        and format_info["height"] > 0
+    }
+
+    if not heights:
+        print("Warning: no YouTube video qualities were found.")
+
+    return sorted(heights, reverse=True)
+
+
+def choose_youtube_quality(qualities: list[int]) -> int | None:
+    if not qualities:
+        return None
+
+    print("\nAvailable video qualities:\n")
+
+    for index, height in enumerate(qualities, start=1):
+        print(f"{index} - {height}p")
+
+    while True:
+        choice = input(
+            f"\nSelect quality [1-{len(qualities)}]: "
+        ).strip()
+
+        if choice.isdigit():
+            selected_index = int(choice) - 1
+
+            if 0 <= selected_index < len(qualities):
+                return qualities[selected_index]
+
+        print(f"Invalid option. Enter a number from 1 to {len(qualities)}.")
+
+
+def build_youtube_format(max_height: int | None = None) -> str:
+    if max_height is None:
+        return YOUTUBE_VIDEO_FORMAT
+
+    preferred_video = f"bv*[height<={max_height}][vcodec^=vp09]"
+    capped_video = f"bv*[height<={max_height}]"
+
+    return (
+        f"{preferred_video}+ba[acodec=opus]/"
+        f"{preferred_video}+ba/"
+        f"{capped_video}+ba/"
+        f"b[height<={max_height}]"
+    )
 
 
 def choose_youtube_mode() -> str:
@@ -72,12 +167,23 @@ def download_youtube_playlist(url: str) -> int:
     print("Extractor: yt-dlp")
     print("Download engine: aria2c where supported")
 
+    qualities = get_available_youtube_qualities(url)
+
+    if qualities:
+        selected_height = choose_youtube_quality(qualities)
+    else:
+        print(
+            "Could not determine playlist qualities; "
+            "using best available quality."
+        )
+        selected_height = None
+
     command = build_youtube_command()
 
     command.extend([
         "--yes-playlist",
         "-f",
-        YOUTUBE_VIDEO_FORMAT,
+        build_youtube_format(selected_height),
         url,
     ])
 
