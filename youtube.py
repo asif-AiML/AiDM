@@ -91,8 +91,8 @@ def build_youtube_format(max_height: int | None = None) -> str:
     if max_height is None:
         return YOUTUBE_VIDEO_FORMAT
 
-    preferred_video = f"bv*[height<={max_height}][vcodec^=vp09]"
-    capped_video = f"bv*[height<={max_height}]"
+    preferred_video = f"bv[height<={max_height}][vcodec^=vp09]"
+    capped_video = f"bv[height<={max_height}]"
 
     return (
         f"{preferred_video}+ba[acodec=opus]/"
@@ -177,6 +177,9 @@ def download_youtube_playlist(url: str) -> int:
             "using best available quality."
         )
         selected_height = None
+
+    if selected_height is not None:
+        print(f"Selected maximum quality: {selected_height}p")
 
     command = build_youtube_command()
 
