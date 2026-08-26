@@ -50,6 +50,23 @@ def is_youtube_url(url: str) -> bool:
         or hostname.endswith(".youtu.be")
     )
 
+
+def is_youtube_playlist_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+
+    is_youtube_hostname = (
+        hostname == "youtube.com"
+        or hostname.endswith(".youtube.com")
+    )
+
+    return (
+        is_youtube_hostname
+        and parsed.path == "/playlist"
+        and bool(parse_qs(parsed.query).get("list", [""])[0])
+    )
+
+
 def normalize_youtube_video_url(url: str) -> str:
     parsed = urlparse(url)
     hostname = (parsed.hostname or "").lower()

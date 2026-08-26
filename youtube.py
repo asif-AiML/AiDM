@@ -28,7 +28,8 @@ def choose_youtube_mode() -> str:
         print("Invalid option. Enter 1, 2 or 3.")
 
 
-def build_youtube_command(total_videos: int) -> list[str]:    return [
+def build_youtube_command(total_videos: int | None = None) -> list[str]:
+    command = [
         "yt-dlp",
         "--downloader",
         "aria2c",
@@ -36,11 +37,17 @@ def build_youtube_command(total_videos: int) -> list[str]:    return [
         "dash,m3u8:native",
         "--downloader-args",
         ARIA2_DOWNLOADER_ARGUMENTS,
-        "--print",
-        f"before_dl:[%(video_autonumber)d/{total_videos}] Starting download: %(title)s",
-        "--no-quiet",
-        "--progress",
     ]
+
+    if total_videos is not None:
+        command.extend([
+            "--print",
+            f"before_dl:[%(video_autonumber)d/{total_videos}] Starting download: %(title)s",
+            "--no-quiet",
+            "--progress",
+        ])
+
+    return command
 
 
 def download_youtube_video(urls: list[str]) -> int:
@@ -58,6 +65,31 @@ def download_youtube_video(urls: list[str]) -> int:
     command.extend(urls)
 
     return run_command(command)
+
+
+def download_youtube_playlist(url: str) -> int:
+    print("Mode: YouTube playlist")
+    print("Extractor: yt-dlp")
+    print("Download engine: aria2c where supported")
+
+    command = build_youtube_command()
+
+    command.extend([
+        "--yes-playlist",
+        "-f",
+        YOUTUBE_VIDEO_FORMAT,
+        url,
+    ])
+
+    result = run_command(command)
+
+    if result == 0:
+        print("YouTube playlist download completed successfully 🎉💫")
+    else:
+        print("Playlist download finished with errors ⚠️")
+        print("Some items may have completed successfully.")
+
+    return result
 
 
 def download_youtube_audio(urls: list[str]) -> int:

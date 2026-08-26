@@ -5,6 +5,7 @@ import sys
 from urllib.parse import urlparse
 
 from detector import (
+    is_youtube_playlist_url,
     is_youtube_url,
     looks_like_direct_file,
     normalize_youtube_video_url,
@@ -16,7 +17,7 @@ from downloader import (
     download_with_ytdlp,
 )
 from stream_parser import detect_stream_type, parse_stream_input
-from youtube import download_youtube
+from youtube import download_youtube, download_youtube_playlist
 
 
 def main() -> int:
@@ -53,6 +54,10 @@ def main() -> int:
     if parsed_url.scheme not in {"http", "https"}:
         print("Error: only HTTP and HTTPS URLs are supported.")
         return 2
+
+    if is_youtube_playlist_url(stream.url):
+        print("YouTube playlist detected. ✅")
+        return download_youtube_playlist(stream.url)
 
     if is_youtube_url(stream.url):
         youtube_url = normalize_youtube_video_url(stream.url)
