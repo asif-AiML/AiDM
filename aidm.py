@@ -21,12 +21,23 @@ def main() -> int:
 
     parser.add_argument(
         "url",
+        nargs="+",
         help="Direct link, website URL, or captured stream input",
     )
 
     args = parser.parse_args()
 
-    stream = parse_stream_input(args.url)
+    if len(args.url) > 1:
+        direct_urls = [looks_like_direct_file(url) for url in args.url]
+
+        if all(direct_urls):
+            print(f"{len(args.url)} Direct URLs Detected✅")
+            return 0
+
+        print("Error: bulk mode currently supports direct URLs only.")
+        return 2
+
+    stream = parse_stream_input(args.url[0])
     parsed_url = urlparse(stream.url)
 
     if parsed_url.scheme not in {"http", "https"}:
