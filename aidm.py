@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from detector import is_youtube_url, looks_like_direct_file
 from downloader import (
     download_direct,
+    download_direct_bulk,
     download_stream,
     download_with_ytdlp,
 )
@@ -32,7 +33,7 @@ def main() -> int:
 
         if all(direct_urls):
             print(f"{len(args.url)} Direct URLs Detected✅")
-            return 0
+            return download_direct_bulk(args.url)
 
         print("Error: bulk mode currently supports direct URLs only.")
         return 2

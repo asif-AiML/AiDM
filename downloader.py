@@ -1,3 +1,7 @@
+import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 from stream_parser import StreamInput
 from utils import run_command
 
@@ -20,6 +24,48 @@ def download_direct(url: str) -> int:
     ]
 
     return run_command(command)
+
+
+def download_direct_bulk(urls: list[str]) -> int:
+    total = len(urls)
+
+    print("Input type: direct HTTP files")
+    print("Download engine: aria2c")
+
+    with TemporaryDirectory(prefix="aidm-bulk-") as temp_dir:
+        progress_path = Path(temp_dir) / "progress"
+        progress_path.write_text("0")
+
+        hook_path = Path(temp_dir) / "show-progress"
+        hook_path.write_text(
+            "#!/usr/bin/env python3\n"
+            "from pathlib import Path\n"
+            f"progress_path = Path({str(progress_path)!r})\n"
+            "current = int(progress_path.read_text()) + 1\n"
+            "progress_path.write_text(str(current))\n"
+            f'print(f"[{{current}}/{total}] Downloading...", flush=True)\n'
+        )
+        os.chmod(hook_path, 0o700)
+
+        command = [
+            "aria2c",
+            "--continue=true",
+            "--max-connection-per-server=1",
+            "--split=1",
+            "--min-split-size=1M",
+            "--console-log-level=warn",
+            "--summary-interval=1",
+            "--force-sequential=true",
+            f"--on-download-start={hook_path}",
+            *urls,
+        ]
+
+        result = run_command(command)
+
+    if result == 0:
+        print(f"{total} Files Downloaded Successfully 💫🎉")
+
+    return result
 
 
 def download_with_ytdlp(url: str) -> int:
