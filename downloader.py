@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -33,19 +32,8 @@ def download_direct_bulk(urls: list[str]) -> int:
     print("Download engine: aria2c")
 
     with TemporaryDirectory(prefix="aidm-bulk-") as temp_dir:
-        progress_path = Path(temp_dir) / "progress"
-        progress_path.write_text("0")
-
-        hook_path = Path(temp_dir) / "show-progress"
-        hook_path.write_text(
-            "#!/usr/bin/env python3\n"
-            "from pathlib import Path\n"
-            f"progress_path = Path({str(progress_path)!r})\n"
-            "current = int(progress_path.read_text()) + 1\n"
-            "progress_path.write_text(str(current))\n"
-            f'print(f"[{{current}}/{total}] Downloading...", flush=True)\n'
-        )
-        os.chmod(hook_path, 0o700)
+        input_path = Path(temp_dir) / "urls.txt"
+        input_path.write_text("\n".join(urls) + "\n")
 
         command = [
             "aria2c",
@@ -55,9 +43,8 @@ def download_direct_bulk(urls: list[str]) -> int:
             "--min-split-size=1M",
             "--console-log-level=warn",
             "--summary-interval=1",
-            "--force-sequential=true",
-            f"--on-download-start={hook_path}",
-            *urls,
+            f"--max-concurrent-downloads={total}",
+            f"--input-file={input_path}",
         ]
 
         result = run_command(command)
@@ -66,6 +53,21 @@ def download_direct_bulk(urls: list[str]) -> int:
         print(f"{total} Files Downloaded Successfully 💫🎉")
 
     return result
+
+
+def download_direct_bulk_sequential(urls: list[str]) -> int:
+    total = len(urls)
+
+    for index, url in enumerate(urls, start=1):
+        print(f"[{index}/{total}] Downloading...")
+
+        result = download_direct(url)
+
+        if result != 0:
+            return result
+
+    print(f"{total} Files Downloaded Successfully 💫🎉")
+    return 0
 
 
 def download_with_ytdlp(url: str) -> int:

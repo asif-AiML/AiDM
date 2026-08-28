@@ -8,6 +8,7 @@ from detector import is_youtube_url, looks_like_direct_file
 from downloader import (
     download_direct,
     download_direct_bulk,
+    download_direct_bulk_sequential,
     download_stream,
     download_with_ytdlp,
 )
@@ -33,7 +34,20 @@ def main() -> int:
 
         if all(direct_urls):
             print(f"{len(args.url)} Direct URLs Detected✅")
-            return download_direct_bulk(args.url)
+
+            while True:
+                print("Choose Mode: [1/2]")
+                print()
+                print("1 - Sequential")
+                print("2 - Parallel")
+
+                mode = input().strip()
+
+                if mode == "1":
+                    return download_direct_bulk_sequential(args.url)
+
+                if mode == "2":
+                    return download_direct_bulk(args.url)
 
         print("Error: bulk mode currently supports direct URLs only.")
         return 2
