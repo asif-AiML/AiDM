@@ -4,12 +4,17 @@ import argparse
 import sys
 from urllib.parse import urlparse
 
-from detector import is_youtube_url, looks_like_direct_file
+from detector import (
+    is_torrent_file_path,
+    is_youtube_url,
+    looks_like_direct_file,
+)
 from downloader import (
     download_direct,
     download_direct_bulk,
     download_direct_bulk_sequential,
     download_stream,
+    download_torrent,
     download_with_ytdlp,
 )
 from stream_parser import detect_stream_type, parse_stream_input
@@ -51,6 +56,9 @@ def main() -> int:
 
         print("Error: bulk mode currently supports direct URLs only.")
         return 2
+
+    if is_torrent_file_path(args.url[0]):
+        return download_torrent(args.url[0])
 
     stream = parse_stream_input(args.url[0])
     parsed_url = urlparse(stream.url)
