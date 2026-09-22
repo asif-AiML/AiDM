@@ -174,7 +174,7 @@ def download_youtube_playlist(url: str) -> int:
         selected_height = None
 
     if selected_height is not None:
-        print(f"Selected maximum quality: {selected_height}p")
+        print(f"Selected quality: {selected_height}p")
 
     command = build_youtube_command()
 
@@ -182,6 +182,8 @@ def download_youtube_playlist(url: str) -> int:
         "--yes-playlist",
         "-f",
         build_youtube_format(selected_height),
+        "--merge-output-format",
+        "mp4",
         url,
     ])
 
