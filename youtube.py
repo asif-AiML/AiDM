@@ -91,13 +91,8 @@ def build_youtube_format(max_height: int | None = None) -> str:
     if max_height is None:
         return YOUTUBE_VIDEO_FORMAT
 
-    preferred_video = f"bv[height<={max_height}][vcodec^=vp09]"
-    capped_video = f"bv[height<={max_height}]"
-
     return (
-        f"{preferred_video}+ba[acodec=opus]/"
-        f"{preferred_video}+ba/"
-        f"{capped_video}+ba/"
+        f"bv[height<={max_height}]+ba/"
         f"b[height<={max_height}]"
     )
 
