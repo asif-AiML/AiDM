@@ -16,6 +16,7 @@ from downloader import (
     download_direct_bulk,
     download_direct_bulk_sequential,
     download_stream,
+    download_subtitle,
     download_torrent,
     download_with_ytdlp,
 )
@@ -46,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--subtitle",
         action="append",
         default=[],
-        help="Stream Inspector subtitle URL (repeatable; not yet downloaded)",
+        help="Stream Inspector subtitle URL (one sidecar supported; requires --title)",
     )
     parser.add_argument(
         "--title",
@@ -86,6 +87,39 @@ def has_stream_inspector_args(args: argparse.Namespace) -> bool:
         or bool(args.subtitle)
         or args.title is not None
     )
+
+
+def download_media_with_sidecar(stream: StreamInput) -> int:
+    """Download main media before attempting an optional subtitle sidecar."""
+    if stream.stream_type in {"hls", "dash"}:
+        media_result = download_stream(stream)
+    else:
+        media_result = download_with_ytdlp(
+            stream.url,
+            title=stream.title,
+            headers=stream.headers,
+        )
+
+    if media_result != 0 or not stream.subtitles:
+        return media_result
+
+    if len(stream.subtitles) > 1:
+        print("Warning: multiple subtitle sidecars are not yet supported; subtitles skipped.")
+        return 0
+
+    if not stream.title:
+        print("Warning: subtitle skipped because no title was supplied for deterministic sidecar naming.")
+        return 0
+
+    subtitle_result = download_subtitle(
+        stream.subtitles[0],
+        stream.title,
+        headers=stream.headers,
+    )
+    if subtitle_result != 0:
+        print("Warning: subtitle download failed; main media downloaded successfully.")
+
+    return 0
 
 
 def run_from_args(args: argparse.Namespace) -> int:
@@ -159,7 +193,7 @@ def run_from_args(args: argparse.Namespace) -> int:
     stream.stream_type = detect_stream_type(stream)
 
     if stream.stream_type in {"hls", "dash"}:
-        return download_stream(stream)
+        return download_media_with_sidecar(stream)
 
     if stream.stream_type == "vtt":
         print("Detected a WebVTT subtitle stream, not the main video.")
@@ -168,11 +202,7 @@ def run_from_args(args: argparse.Namespace) -> int:
     if looks_like_direct_file(stream.url):
         return download_direct(stream.url)
 
-    return download_with_ytdlp(
-        stream.url,
-        title=stream.title,
-        headers=stream.headers,
-    )
+    return download_media_with_sidecar(stream)
 
 
 def main() -> int:

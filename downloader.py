@@ -1,10 +1,36 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from urllib.parse import urlparse
 
 from stream_parser import StreamInput
 from utils import run_command, sanitize_filename
 
 ARIA2_DOWNLOADER_ARGUMENTS = "aria2c:-x 8 -s 8 -k 1M"
+
+
+def download_subtitle(
+    subtitle_url: str,
+    title: str,
+    headers: dict[str, str] | None = None,
+) -> int:
+    suffix = Path(urlparse(subtitle_url).path).suffix.lower()
+    if suffix not in {".vtt", ".srt", ".ass", ".ssa", ".ttml", ".dfxp"}:
+        suffix = ".vtt"
+
+    safe_title = sanitize_filename(title)
+    command = [
+        "aria2c",
+        "--continue=true",
+        "--console-log-level=warn",
+        "--summary-interval=1",
+        f"--out={safe_title}{suffix}",
+    ]
+
+    for header_name, header_value in (headers or {}).items():
+        command.append(f"--header={header_name}:{header_value}")
+
+    command.append(subtitle_url)
+    return run_command(command)
 
 
 def download_torrent(torrent_path: str) -> int:
