@@ -34,6 +34,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="One or more direct links, website URLs, or stream inputs",
     )
 
+    parser.add_argument(
+        "--user-agent",
+        help="Stream Inspector User-Agent (not yet applied)",
+    )
+    parser.add_argument(
+        "--referer",
+        help="Stream Inspector Referer (not yet applied)",
+    )
+    parser.add_argument(
+        "--subtitle",
+        action="append",
+        default=[],
+        help="Stream Inspector subtitle URL (repeatable; not yet downloaded)",
+    )
+    parser.add_argument(
+        "--title",
+        help="Stream Inspector title (not yet applied)",
+    )
+
     return parser
 
 
