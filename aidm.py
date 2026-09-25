@@ -19,7 +19,7 @@ from downloader import (
     download_torrent,
     download_with_ytdlp,
 )
-from stream_parser import detect_stream_type, parse_stream_input
+from stream_parser import StreamInput, detect_stream_type, parse_stream_input
 from youtube import download_youtube, download_youtube_playlist
 
 
@@ -58,6 +58,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return build_parser().parse_args(argv)
+
+
+def build_stream_input_from_args(
+    args: argparse.Namespace,
+    media_url: str,
+) -> StreamInput:
+    """Copy parsed handoff values into a stream input without routing it."""
+    headers = {}
+    if args.user_agent is not None:
+        headers["User-Agent"] = args.user_agent
+    if args.referer is not None:
+        headers["Referer"] = args.referer
+
+    return StreamInput(
+        url=media_url,
+        headers=headers,
+        title=args.title,
+        subtitles=list(args.subtitle),
+    )
 
 
 def run_from_args(args: argparse.Namespace) -> int:
