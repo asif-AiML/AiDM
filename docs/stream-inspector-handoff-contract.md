@@ -691,20 +691,47 @@ They solve different boundaries and both are required.
 
 ---
 
-## Current AiDM code that will likely change
+## Current unified AiDM baseline
 
-At the time this document was written, the `feat/Streaming-URLs` branch has:
+As of **2026-09-25**, the Stream Inspector work no longer sits on an isolated streaming-only router.
+
+The feature branches were deliberately reconciled into:
+
+```text
+integration/aidm-unified-router
+```
+
+This branch is now the development baseline for the AiDM-side Stream Inspector handoff.
 
 ### `aidm.py`
 
-- one positional `url` argument;
-- no extension-style `--user-agent`, `--referer`, `--subtitle`, or `--title` arguments yet;
-- HLS/DASH title gathered interactively with `input()`;
-- routing through `parse_stream_input()`, `detect_stream_type()`, and `download_stream()`.
+The unified gate now uses one multi-value positional:
 
-Extension-driven mode should remove the need for an interactive title prompt when `--title` was supplied.
+```python
+parser.add_argument(
+    "urls",
+    nargs="+",
+    ...
+)
+```
 
-Interactive fallback can remain for ordinary manually entered stream URLs.
+The router already preserves these working input families:
+
+- single YouTube video;
+- YouTube playlist;
+- multiple YouTube URLs;
+- single direct URL;
+- multiple direct URLs with Sequential/Parallel modes;
+- local `.torrent` files;
+- naked HLS/DASH URLs;
+- generic yt-dlp fallback;
+- unsupported mixed-bulk rejection.
+
+The old streaming-only single positional `url` architecture is historical and must not be reintroduced.
+
+The Stream Inspector parser work must extend this unified gate rather than replace it.
+
+For an Inspector handoff, the parser may still receive exactly one selected media URL, but that is a **route-level validation rule**, not a reason to collapse the whole AiDM CLI back to one positional URL.
 
 ### `stream_parser.py`
 
@@ -716,39 +743,98 @@ headers
 stream_type
 ```
 
-`parse_stream_input()` wraps a plain URL with empty headers; legacy pipe-delimited parsing has been retired.
+`parse_stream_input()` now wraps a plain URL only.
 
-This module is a likely place to evolve the normalized streaming data model, but command-line parsing itself should remain an application-boundary concern rather than being hidden inside URL parsing.
+The retired legacy form:
+
+```text
+URL|User-Agent=...&Referer=...
+```
+
+is no longer parsed.
+
+The `headers` field remains intentionally available because the future argument-based Stream Inspector handoff will populate it.
 
 ### `downloader.py`
 
-Current streaming functions already:
+The unified downloader contains the accumulated direct, bulk-direct, torrent, generic yt-dlp, and stream paths.
 
-- build subprocess argument lists;
-- use yt-dlp for streams;
-- pass captured headers through `--add-header`;
-- sanitize titles;
-- use yt-dlp output templates.
+For streaming specifically, it already supports:
 
-This is a strong base for the new handoff.
+- list-based subprocess execution;
+- yt-dlp native HLS/DASH handling;
+- header propagation through `--add-header`;
+- optional title input;
+- filename sanitization through `sanitize_filename()`;
+- natural yt-dlp naming when no explicit title is supplied.
 
-The main additions will be:
+The old interactive movie/video title prompt has been removed.
 
-- accept normalized title without forcing an interactive prompt;
-- accept subtitle URL list;
-- pass User-Agent/Referer from parsed CLI arguments into the same request-context mechanism;
-- download optional subtitle sidecars;
-- coordinate basename/output naming;
-- later accept an explicit browser-session/cookie strategy once that contract is finalized.
+A naked stream URL therefore remains a first-class feature:
+
+```text
+naked stream URL
+→ try normally
+→ if it works, finish normally
+→ if browser context is required, use Stream Inspector
+```
 
 ### `utils.py`
 
-Already contains:
+The unified baseline contains:
 
 - `run_command(command: list[str])`;
 - `sanitize_filename()`.
 
-Keep command execution list-based.
+Command execution remains list-based. The Stream Inspector work must not introduce `shell=True`.
+
+---
+
+## Integration history note — unified router baseline
+
+This handoff work originally began while routing intelligence was distributed across separate feature branches.
+
+Before implementing the new Inspector argument contract, the project deliberately stopped and unified those branches first.
+
+The integration history was:
+
+```text
+main
+  ↓
+integration/aidm-unified-router
+  ↓
+feat/2ndry-features
+  ↓
+feat/youtube
+  ↓
+cleaned feat/Streaming-URLs
+```
+
+`feat/bulk-direct-downloads` was already contained in `main`, so it did not need to be merged again.
+
+The important engineering rule during integration was:
+
+> merge capabilities, not whole-file ownership.
+
+The YouTube merge produced a serious `aidm.py` conflict because both branches had evolved the central router. That conflict was resolved by combining the direct/bulk/torrent routing with YouTube bulk, playlist detection, URL normalization, and the list-based YouTube API.
+
+After that reconciliation, **nine routing tests passed**, including direct, bulk-direct, torrent, YouTube single, YouTube bulk, YouTube playlist, naked streaming, generic fallback, and mixed-bulk/error behavior. Logs were inspected to confirm that success did not come from accidental misclassification.
+
+The later merge of `feat/Streaming-URLs` was treated as another high-risk semantic merge. The already-proven unified router was preserved while the cleaned streaming architecture contributed:
+
+- removal of legacy pipe-delimited Stream Detector parsing;
+- removal of manual movie-name prompts;
+- optional title handling;
+- header plumbing;
+- filename sanitization;
+- preservation of naked HLS/DASH support;
+- the Stream Inspector handoff contract documentation.
+
+After that merge, the same **nine-route regression suite passed again**, with routing logs inspected for classification correctness.
+
+That repeated green regression established `integration/aidm-unified-router` as the new baseline for Milestone 1 and later Stream Inspector work.
+
+The original feature branches remain valuable historical/reference implementations and are not treated as disposable after integration.
 
 ---
 
@@ -756,15 +842,22 @@ Keep command execution list-based.
 
 ### Phase 1 — parser contract
 
-Add the new arguments without changing the downloader yet:
+Add the new optional handoff arguments without changing downloader behavior yet:
 
 ```text
 --user-agent
 --referer
 --subtitle   (repeatable)
 --title
-url          (positional)
 ```
+
+Preserve the unified AiDM positional model:
+
+```text
+urls    (nargs="+")
+```
+
+A normal Stream Inspector handoff supplies one selected media URL inside that broader positional model. Inspector-specific validation may require exactly one media URL when handoff options are present, but the global CLI must remain compatible with YouTube bulk and direct bulk input.
 
 Refactor parser creation so a future GUI can call the same parser with an explicit argv list.
 
