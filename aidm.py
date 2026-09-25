@@ -23,7 +23,7 @@ from stream_parser import detect_stream_type, parse_stream_input
 from youtube import download_youtube, download_youtube_playlist
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="AIDM terminal download router"
     )
@@ -34,8 +34,14 @@ def main() -> int:
         help="One or more direct links, website URLs, or stream inputs",
     )
 
-    args = parser.parse_args()
+    return parser
 
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
+
+
+def run_from_args(args: argparse.Namespace) -> int:
     if len(args.urls) > 1:
         if all(is_youtube_url(url) for url in args.urls):
             youtube_urls = [
@@ -112,6 +118,10 @@ def main() -> int:
         stream.url,
         headers=stream.headers,
     )
+
+
+def main() -> int:
+    return run_from_args(parse_args())
 
 
 if __name__ == "__main__":
