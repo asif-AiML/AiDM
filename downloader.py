@@ -7,6 +7,24 @@ from utils import run_command
 ARIA2_DOWNLOADER_ARGUMENTS = "aria2c:-x 8 -s 8 -k 1M"
 
 
+def download_torrent(torrent_path: str) -> int:
+    path = Path(torrent_path).expanduser()
+
+    if not path.is_file():
+        print(f"Error: torrent file does not exist or is not a regular file: {path}")
+        return 2
+
+    print("Input type: BitTorrent file")
+    print("Download engine: aria2c")
+
+    command = [
+        "aria2c",
+        str(path),
+    ]
+
+    return run_command(command)
+
+
 def download_direct(url: str) -> int:
     print("Input type: direct HTTP file")
     print("Download engine: aria2c")

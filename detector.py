@@ -41,6 +41,15 @@ DIRECT_CONTENT_TYPES = {
 }
 
 
+def is_torrent_file_path(value: str) -> bool:
+    parsed = urlparse(value)
+
+    return (
+        parsed.scheme not in {"http", "https"}
+        and Path(value).suffix.lower() == ".torrent"
+    )
+
+
 def is_youtube_url(url: str) -> bool:
     hostname = (urlparse(url).hostname or "").lower()
 
