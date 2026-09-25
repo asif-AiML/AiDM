@@ -6,8 +6,10 @@ from urllib.parse import urlparse
 
 from detector import (
     is_torrent_file_path,
+    is_youtube_playlist_url,
     is_youtube_url,
     looks_like_direct_file,
+    normalize_youtube_video_url,
 )
 from downloader import (
     download_direct,
@@ -18,7 +20,7 @@ from downloader import (
     download_with_ytdlp,
 )
 from stream_parser import detect_stream_type, parse_stream_input
-from youtube import download_youtube
+from youtube import download_youtube, download_youtube_playlist
 
 
 def main() -> int:
@@ -27,18 +29,32 @@ def main() -> int:
     )
 
     parser.add_argument(
-        "url",
+        "urls",
         nargs="+",
-        help="Direct link, website URL, or captured stream input",
+        help="One or more direct links, website URLs, or stream inputs",
     )
 
     args = parser.parse_args()
 
-    if len(args.url) > 1:
-        direct_urls = [looks_like_direct_file(url) for url in args.url]
+    if len(args.urls) > 1:
+        if all(is_youtube_url(url) for url in args.urls):
+            youtube_urls = [
+                normalize_youtube_video_url(url)
+                for url in args.urls
+            ]
+
+            print(f"{len(youtube_urls)} YouTube URLs detected.✅")
+            return download_youtube(youtube_urls)
+
+        direct_urls = [
+            urlparse(url).scheme in {"http", "https"}
+            and not is_youtube_url(url)
+            and looks_like_direct_file(url)
+            for url in args.urls
+        ]
 
         if all(direct_urls):
-            print(f"{len(args.url)} Direct URLs Detected✅")
+            print(f"{len(args.urls)} Direct URLs Detected✅")
 
             while True:
                 print("Choose Mode: [1/2]")
@@ -49,26 +65,36 @@ def main() -> int:
                 mode = input().strip()
 
                 if mode == "1":
-                    return download_direct_bulk_sequential(args.url)
+                    return download_direct_bulk_sequential(args.urls)
 
                 if mode == "2":
-                    return download_direct_bulk(args.url)
+                    return download_direct_bulk(args.urls)
 
-        print("Error: bulk mode currently supports direct URLs only.")
+        print(
+            "Error: bulk mode supports only all-YouTube or all-direct URLs; "
+            "mixed batches are unsupported."
+        )
         return 2
 
-    if is_torrent_file_path(args.url[0]):
-        return download_torrent(args.url[0])
+    raw_input = args.urls[0]
 
-    stream = parse_stream_input(args.url[0])
+    if is_torrent_file_path(raw_input):
+        return download_torrent(raw_input)
+
+    stream = parse_stream_input(raw_input)
     parsed_url = urlparse(stream.url)
 
     if parsed_url.scheme not in {"http", "https"}:
         print("Error: only HTTP and HTTPS URLs are supported.")
         return 2
 
+    if is_youtube_playlist_url(stream.url):
+        print("YouTube playlist detected. ✅")
+        return download_youtube_playlist(stream.url)
+
     if is_youtube_url(stream.url):
-        return download_youtube(stream.url)
+        youtube_url = normalize_youtube_video_url(stream.url)
+        return download_youtube([youtube_url])
 
     stream.stream_type = detect_stream_type(stream)
 
