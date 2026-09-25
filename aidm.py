@@ -39,12 +39,7 @@ def main() -> int:
     stream.stream_type = detect_stream_type(stream)
 
     if stream.stream_type in {"hls", "dash"}:
-        title = input("Enter movie/video name: ").strip()
-
-        if not title:
-            title = "AIDM_Stream"
-
-        return download_stream(stream, title)
+        return download_stream(stream)
 
 
     if stream.stream_type == "vtt":
@@ -56,14 +51,9 @@ def main() -> int:
         print("\nStream probe inconclusive.")
         print("Delegating detection to yt-dlp...\n")
 
-        title = input("Enter movie/video name (optional): ").strip()
-        if not title:
-            title = "AIDM_Stream"
-
         return download_with_ytdlp(
             stream.url,
-            title,
-            stream.headers,
+            headers=stream.headers,
         )
 
 
