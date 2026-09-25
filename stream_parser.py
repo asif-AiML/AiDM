@@ -24,6 +24,8 @@ class StreamInput:
     url: str
     headers: dict[str, str] = field(default_factory=dict)
     stream_type: str | None = None
+    title: str | None = None
+    subtitles: list[str] = field(default_factory=list)
 
 
 def parse_stream_input(raw_input: str) -> StreamInput:
