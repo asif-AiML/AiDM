@@ -108,7 +108,10 @@ def main() -> int:
     if looks_like_direct_file(stream.url):
         return download_direct(stream.url)
 
-    return download_with_ytdlp(stream.url)
+    return download_with_ytdlp(
+        stream.url,
+        headers=stream.headers,
+    )
 
 
 if __name__ == "__main__":
