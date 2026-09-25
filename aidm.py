@@ -36,11 +36,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--user-agent",
-        help="Stream Inspector User-Agent (not yet applied)",
+        help="Stream Inspector User-Agent for media requests",
     )
     parser.add_argument(
         "--referer",
-        help="Stream Inspector Referer (not yet applied)",
+        help="Stream Inspector Referer for media requests",
     )
     parser.add_argument(
         "--subtitle",
@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--title",
-        help="Stream Inspector title (not yet applied)",
+        help="Stream Inspector title for media output naming",
     )
 
     return parser
@@ -138,7 +138,10 @@ def run_from_args(args: argparse.Namespace) -> int:
     if is_torrent_file_path(raw_input):
         return download_torrent(raw_input)
 
-    stream = parse_stream_input(raw_input)
+    if has_stream_inspector_args(args):
+        stream = build_stream_input_from_args(args, raw_input)
+    else:
+        stream = parse_stream_input(raw_input)
     parsed_url = urlparse(stream.url)
 
     if parsed_url.scheme not in {"http", "https"}:
@@ -167,6 +170,7 @@ def run_from_args(args: argparse.Namespace) -> int:
 
     return download_with_ytdlp(
         stream.url,
+        title=stream.title,
         headers=stream.headers,
     )
 
