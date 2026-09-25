@@ -604,15 +604,12 @@ The existing `StreamInput` already provides a natural place to evolve this desig
 
 ## Backward compatibility
 
-AiDM currently accepts:
+AiDM currently accepts plain URLs, including naked stream URLs.
 
-- plain URLs;
-- the older Stream Detector form:
-  `URL|User-Agent=...&Referer=...`
-
-The new extension handoff should be added deliberately without accidentally breaking existing supported inputs unless a migration is explicitly chosen.
-
-During implementation, decide whether the legacy pipe format remains supported temporarily or is formally retired.
+Milestone 0A retires the older Stream Detector form
+`URL|User-Agent=...&Referer=...`. Input is no longer split or decoded into headers.
+`StreamInput` and downloader header support remain available for the future
+argument-based handoff, which is not implemented yet.
 
 The new argument-based contract is preferable because:
 
@@ -719,7 +716,7 @@ headers
 stream_type
 ```
 
-It also understands the older pipe-delimited Stream Detector format.
+`parse_stream_input()` wraps a plain URL with empty headers; legacy pipe-delimited parsing has been retired.
 
 This module is a likely place to evolve the normalized streaming data model, but command-line parsing itself should remain an application-boundary concern rather than being hidden inside URL parsing.
 

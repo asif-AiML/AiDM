@@ -21,7 +21,7 @@ def main() -> int:
 
     parser.add_argument(
         "url",
-        help="Direct link, website URL, or captured stream input",
+        help="Direct link, website URL, or stream URL",
     )
 
     args = parser.parse_args()
