@@ -79,7 +79,20 @@ def build_stream_input_from_args(
     )
 
 
+def has_stream_inspector_args(args: argparse.Namespace) -> bool:
+    return (
+        args.user_agent is not None
+        or args.referer is not None
+        or bool(args.subtitle)
+        or args.title is not None
+    )
+
+
 def run_from_args(args: argparse.Namespace) -> int:
+    if has_stream_inspector_args(args) and len(args.urls) != 1:
+        print("Error: Stream Inspector handoff expects exactly one selected media URL.")
+        return 2
+
     if len(args.urls) > 1:
         if all(is_youtube_url(url) for url in args.urls):
             youtube_urls = [
