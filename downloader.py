@@ -1,10 +1,54 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from urllib.parse import urlparse
 
 from stream_parser import StreamInput
-from utils import run_command
+from utils import run_command, sanitize_filename
 
 ARIA2_DOWNLOADER_ARGUMENTS = "aria2c:-x 8 -s 8 -k 1M"
+
+
+def download_subtitle(
+    subtitle_url: str,
+    title: str,
+    headers: dict[str, str] | None = None,
+) -> int:
+    suffix = Path(urlparse(subtitle_url).path).suffix.lower()
+    if suffix not in {".vtt", ".srt", ".ass", ".ssa", ".ttml", ".dfxp"}:
+        suffix = ".vtt"
+
+    safe_title = sanitize_filename(title)
+    command = [
+        "aria2c",
+        "--continue=true",
+        "--console-log-level=warn",
+        "--summary-interval=1",
+        f"--out={safe_title}{suffix}",
+    ]
+
+    for header_name, header_value in (headers or {}).items():
+        command.append(f"--header={header_name}:{header_value}")
+
+    command.append(subtitle_url)
+    return run_command(command)
+
+
+def download_torrent(torrent_path: str) -> int:
+    path = Path(torrent_path).expanduser()
+
+    if not path.is_file():
+        print(f"Error: torrent file does not exist or is not a regular file: {path}")
+        return 2
+
+    print("Input type: BitTorrent file")
+    print("Download engine: aria2c")
+
+    command = [
+        "aria2c",
+        str(path),
+    ]
+
+    return run_command(command)
 
 
 def download_direct(url: str) -> int:
@@ -70,13 +114,35 @@ def download_direct_bulk_sequential(urls: list[str]) -> int:
     return 0
 
 
-def download_with_ytdlp(url: str) -> int:
+def download_with_ytdlp(
+    url: str,
+    title: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> int:
     print("Input type: supported website/media URL")
     print("Extractor: yt-dlp")
     print("Download engine: aria2c where supported")
 
     command = [
         "yt-dlp",
+    ]
+
+    if title:
+        safe_title = sanitize_filename(title)
+        command.extend([
+            "-o",
+            f"{safe_title}.%(ext)s",
+        ])
+
+
+    if headers:
+        for header_name, header_value in headers.items():
+            command.extend([
+                "--add-header",
+                f"{header_name}:{header_value}",
+            ])
+
+    command.extend([
         "--downloader",
         "aria2c",
         "--downloader",
@@ -84,7 +150,8 @@ def download_with_ytdlp(url: str) -> int:
         "--downloader-args",
         ARIA2_DOWNLOADER_ARGUMENTS,
         url,
-    ]
+    ])
+
 
     return run_command(command)
 
@@ -99,6 +166,13 @@ def download_stream(stream: StreamInput) -> int:
         "--downloader",
         "dash,m3u8:native",
     ]
+
+    if stream.title:
+        safe_title = sanitize_filename(stream.title)
+        command.extend([
+            "-o",
+            f"{safe_title}.%(ext)s",
+        ])
 
     for header_name, header_value in stream.headers.items():
         command.extend([

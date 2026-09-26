@@ -1,8 +1,7 @@
 import urllib.error
 import urllib.request
 from pathlib import Path
-from urllib.parse import urlparse
-
+from urllib.parse import parse_qs, urlparse
 
 DIRECT_EXTENSIONS = {
     ".zip",
@@ -41,6 +40,15 @@ DIRECT_CONTENT_TYPES = {
 }
 
 
+def is_torrent_file_path(value: str) -> bool:
+    parsed = urlparse(value)
+
+    return (
+        parsed.scheme not in {"http", "https"}
+        and Path(value).suffix.lower() == ".torrent"
+    )
+
+
 def is_youtube_url(url: str) -> bool:
     hostname = (urlparse(url).hostname or "").lower()
 
@@ -50,6 +58,48 @@ def is_youtube_url(url: str) -> bool:
         or hostname == "youtu.be"
         or hostname.endswith(".youtu.be")
     )
+
+
+def is_youtube_playlist_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+
+    is_youtube_hostname = (
+        hostname == "youtube.com"
+        or hostname.endswith(".youtube.com")
+    )
+
+    return (
+        is_youtube_hostname
+        and parsed.path == "/playlist"
+        and bool(parse_qs(parsed.query).get("list", [""])[0])
+    )
+
+
+def normalize_youtube_video_url(url: str) -> str:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+
+    if (
+        hostname == "youtube.com"
+        or hostname.endswith(".youtube.com")
+    ):
+        if parsed.path == "/watch":
+            video_id = parse_qs(parsed.query).get("v", [None])[0]
+
+            if video_id:
+                return f"https://www.youtube.com/watch?v={video_id}"
+
+    if (
+        hostname == "youtu.be"
+        or hostname.endswith(".youtu.be")
+    ):
+        video_id = parsed.path.strip("/")
+
+        if video_id:
+            return f"https://youtu.be/{video_id}"
+
+    return url
 
 
 def looks_like_direct_file(url: str) -> bool:

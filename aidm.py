@@ -4,36 +4,148 @@ import argparse
 import sys
 from urllib.parse import urlparse
 
-from detector import is_youtube_url, looks_like_direct_file
+from detector import (
+    is_torrent_file_path,
+    is_youtube_playlist_url,
+    is_youtube_url,
+    looks_like_direct_file,
+    normalize_youtube_video_url,
+)
 from downloader import (
     download_direct,
     download_direct_bulk,
     download_direct_bulk_sequential,
     download_stream,
+    download_subtitle,
+    download_torrent,
     download_with_ytdlp,
 )
-from stream_parser import detect_stream_type, parse_stream_input
-from youtube import download_youtube
+from stream_parser import StreamInput, detect_stream_type, parse_stream_input
+from youtube import download_youtube, download_youtube_playlist
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="AIDM terminal download router"
     )
 
     parser.add_argument(
-        "url",
+        "urls",
         nargs="+",
-        help="Direct link, website URL, or captured stream input",
+        help="One or more direct links, website URLs, or stream inputs",
     )
 
-    args = parser.parse_args()
+    parser.add_argument(
+        "--user-agent",
+        help="Stream Inspector User-Agent for media requests",
+    )
+    parser.add_argument(
+        "--referer",
+        help="Stream Inspector Referer for media requests",
+    )
+    parser.add_argument(
+        "--subtitle",
+        action="append",
+        default=[],
+        help="Stream Inspector subtitle URL (one sidecar supported; requires --title)",
+    )
+    parser.add_argument(
+        "--title",
+        help="Stream Inspector title for media output naming",
+    )
 
-    if len(args.url) > 1:
-        direct_urls = [looks_like_direct_file(url) for url in args.url]
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
+
+
+def build_stream_input_from_args(
+    args: argparse.Namespace,
+    media_url: str,
+) -> StreamInput:
+    """Copy parsed handoff values into a stream input without routing it."""
+    headers = {}
+    if args.user_agent is not None:
+        headers["User-Agent"] = args.user_agent
+    if args.referer is not None:
+        headers["Referer"] = args.referer
+
+    return StreamInput(
+        url=media_url,
+        headers=headers,
+        title=args.title,
+        subtitles=list(args.subtitle),
+    )
+
+
+def has_stream_inspector_args(args: argparse.Namespace) -> bool:
+    return (
+        args.user_agent is not None
+        or args.referer is not None
+        or bool(args.subtitle)
+        or args.title is not None
+    )
+
+
+def download_media_with_sidecar(stream: StreamInput) -> int:
+    """Download main media before attempting an optional subtitle sidecar."""
+    if stream.stream_type in {"hls", "dash"}:
+        media_result = download_stream(stream)
+    else:
+        media_result = download_with_ytdlp(
+            stream.url,
+            title=stream.title,
+            headers=stream.headers,
+        )
+
+    if media_result != 0 or not stream.subtitles:
+        return media_result
+
+    if len(stream.subtitles) > 1:
+        print("Warning: multiple subtitle sidecars are not yet supported; subtitles skipped.")
+        return 0
+
+    if not stream.title:
+        print("Warning: subtitle skipped because no title was supplied for deterministic sidecar naming.")
+        return 0
+
+    subtitle_result = download_subtitle(
+        stream.subtitles[0],
+        stream.title,
+        headers=stream.headers,
+    )
+    if subtitle_result != 0:
+        print("Warning: subtitle download failed; main media downloaded successfully.")
+
+    return 0
+
+
+def run_from_args(args: argparse.Namespace) -> int:
+    if has_stream_inspector_args(args) and len(args.urls) != 1:
+        print("Error: Stream Inspector handoff expects exactly one selected media URL.")
+        return 2
+
+    if len(args.urls) > 1:
+        if all(is_youtube_url(url) for url in args.urls):
+            youtube_urls = [
+                normalize_youtube_video_url(url)
+                for url in args.urls
+            ]
+
+            print(f"{len(youtube_urls)} YouTube URLs detected.✅")
+            return download_youtube(youtube_urls)
+
+        direct_urls = [
+            urlparse(url).scheme in {"http", "https"}
+            and not is_youtube_url(url)
+            and looks_like_direct_file(url)
+            for url in args.urls
+        ]
 
         if all(direct_urls):
-            print(f"{len(args.url)} Direct URLs Detected✅")
+            print(f"{len(args.urls)} Direct URLs Detected✅")
 
             while True:
                 print("Choose Mode: [1/2]")
@@ -44,28 +156,44 @@ def main() -> int:
                 mode = input().strip()
 
                 if mode == "1":
-                    return download_direct_bulk_sequential(args.url)
+                    return download_direct_bulk_sequential(args.urls)
 
                 if mode == "2":
-                    return download_direct_bulk(args.url)
+                    return download_direct_bulk(args.urls)
 
-        print("Error: bulk mode currently supports direct URLs only.")
+        print(
+            "Error: bulk mode supports only all-YouTube or all-direct URLs; "
+            "mixed batches are unsupported."
+        )
         return 2
 
-    stream = parse_stream_input(args.url[0])
+    raw_input = args.urls[0]
+
+    if is_torrent_file_path(raw_input):
+        return download_torrent(raw_input)
+
+    if has_stream_inspector_args(args):
+        stream = build_stream_input_from_args(args, raw_input)
+    else:
+        stream = parse_stream_input(raw_input)
     parsed_url = urlparse(stream.url)
 
     if parsed_url.scheme not in {"http", "https"}:
         print("Error: only HTTP and HTTPS URLs are supported.")
         return 2
 
+    if is_youtube_playlist_url(stream.url):
+        print("YouTube playlist detected. ✅")
+        return download_youtube_playlist(stream.url)
+
     if is_youtube_url(stream.url):
-        return download_youtube(stream.url)
+        youtube_url = normalize_youtube_video_url(stream.url)
+        return download_youtube([youtube_url])
 
     stream.stream_type = detect_stream_type(stream)
 
     if stream.stream_type in {"hls", "dash"}:
-        return download_stream(stream)
+        return download_media_with_sidecar(stream)
 
     if stream.stream_type == "vtt":
         print("Detected a WebVTT subtitle stream, not the main video.")
@@ -74,7 +202,11 @@ def main() -> int:
     if looks_like_direct_file(stream.url):
         return download_direct(stream.url)
 
-    return download_with_ytdlp(stream.url)
+    return download_media_with_sidecar(stream)
+
+
+def main() -> int:
+    return run_from_args(parse_args())
 
 
 if __name__ == "__main__":

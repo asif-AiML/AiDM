@@ -464,7 +464,7 @@ whole AiDM parser
 
 ## Milestone plan
 
-### Milestone 0A — Streaming battlefield cleanup
+### Milestone 0A — Streaming battlefield cleanup ✅ COMPLETE
 
 Branch:
 
@@ -488,7 +488,7 @@ Only after this milestone passes should branch integration begin.
 
 ---
 
-### Milestone 0B — Create the integration branch
+### Milestone 0B — Create the integration branch ✅ COMPLETE
 
 Create from:
 
@@ -506,7 +506,7 @@ integration/aidm-unified-router
 
 ---
 
-### Milestone 0C — Merge feature branches one at a time
+### Milestone 0C — Merge feature branches one at a time ✅ COMPLETE
 
 Merge feature branches into the integration branch one by one.
 
@@ -535,11 +535,11 @@ Do not merge all branches at once and debug the combined result afterward.
 
 ---
 
-### Milestone 0D — Unified routing baseline
+### Milestone 0D — Unified routing baseline ✅ COMPLETE
 
-After all feature branches are integrated, run the complete routing regression matrix.
+The unified routing baseline was established on **2026-09-25**.
 
-The integration branch should successfully preserve:
+The final integration branch successfully preserved:
 
 - single YouTube;
 - YouTube playlists;
@@ -550,11 +550,123 @@ The integration branch should successfully preserve:
 - torrent handling;
 - naked HLS/DASH;
 - generic yt-dlp fallback;
-- useful invalid-input behavior.
+- useful mixed/invalid-input behavior.
 
-Only after this baseline is green is branch unification considered complete.
+The full nine-route manual regression suite passed after the YouTube reconciliation and then passed again after the cleaned streaming branch was merged.
 
-This becomes the new development baseline for Stream Inspector work.
+Routing logs were inspected in both rounds to verify correct classification rather than merely successful downstream downloads.
+
+`integration/aidm-unified-router` is therefore the new development baseline for Stream Inspector work.
+
+---
+
+## Historical execution record — branch unification
+
+The original plan intentionally allowed the merge order to change when Git history provided a safer path. That happened during execution.
+
+### 1. Streaming cleanup first
+
+`feat/Streaming-URLs` completed Milestone 0A before integration.
+
+The cleanup removed:
+
+- the legacy `URL|User-Agent=...&Referer=...` grammar;
+- the old manual movie/video title prompts.
+
+It preserved:
+
+- naked HLS/DASH support;
+- `StreamInput`;
+- header plumbing;
+- optional future title support;
+- stream detection and yt-dlp routing.
+
+A naked stream URL that did not require browser context was manually tested and downloaded successfully after cleanup.
+
+### 2. Integration branch created from `main`
+
+The new branch was created as:
+
+```text
+integration/aidm-unified-router
+```
+
+`main` remained protected.
+
+Repository history showed that `feat/bulk-direct-downloads` was already contained in `main`, so merging that branch again was unnecessary.
+
+### 3. Torrent capability integrated
+
+`feat/2ndry-features` was merged next.
+
+The resulting baseline combined:
+
+```text
+direct single
++ direct bulk sequential
++ direct bulk parallel
++ local .torrent
+```
+
+Those combinations were manually tested and passed.
+
+### 4. YouTube capability reconciled
+
+Merging `feat/youtube` produced a conflict in the high-stakes central router, `aidm.py`.
+
+The conflict was resolved semantically rather than by choosing one side wholesale.
+
+The unified router preserved direct/bulk/torrent behavior while adding:
+
+- YouTube playlist detection;
+- YouTube bulk handling;
+- YouTube URL normalization;
+- list-based single/bulk YouTube routing.
+
+The resulting multi-input rule became:
+
+```text
+multiple inputs
+  ├─ all YouTube → YouTube bulk
+  ├─ all direct  → direct bulk menu
+  └─ otherwise   → unsupported mixed bulk
+```
+
+The single-input route preserved torrent-first handling, playlist-before-video ordering, stream detection, direct classification, and generic yt-dlp fallback.
+
+A nine-case manual routing regression suite passed, and the logs showed no bad classification.
+
+### 5. Cleaned streaming branch integrated
+
+`feat/Streaming-URLs` was then merged into the already-proven unified router.
+
+This merge was treated as another semantic reconciliation: the unified router remained authoritative for accumulated routing intelligence, while the streaming branch contributed its cleaned streaming-specific architecture.
+
+Important preserved/added pieces included:
+
+- plain/naked stream input;
+- HLS/DASH/VTT detection;
+- header propagation;
+- optional title support without interactive prompting;
+- `sanitize_filename()`;
+- removal of legacy pipe parsing;
+- Stream Inspector handoff documentation.
+
+The integration specifically avoided allowing a failed stream probe to steal a direct-file route before direct classification had a chance.
+
+After this merge, the full nine-route manual regression suite passed **again**, with routing logs inspected for classification correctness.
+
+### Baseline result
+
+The distributed feature intelligence is now unified.
+
+The original branches remain available as historical/reference implementations, while active Stream Inspector development proceeds on:
+
+```text
+integration/aidm-unified-router
+```
+
+From this point onward, every Stream Inspector milestone inherits the routing regression contract established here.
 
 ---
 

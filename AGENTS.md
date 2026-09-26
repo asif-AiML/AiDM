@@ -39,6 +39,8 @@ Do not assume behavior from another Git branch should be copied into the current
 
 AiDM uses separate Git branches to develop independent features.
 
+Work only on the requested branch.
+
 Features developed in separate branches may later be merged.
 
 Therefore:
@@ -74,6 +76,8 @@ Unless explicitly requested, preserve:
 * existing command-line behavior outside the requested feature
 
 A new feature must not silently change unrelated existing behavior.
+
+Preserve the yt-dlp → aria2c architecture.
 
 ---
 

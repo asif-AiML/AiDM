@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 import urllib.error
 import urllib.request
-from urllib.parse import parse_qsl
 
 
 HLS_CONTENT_TYPES = {
@@ -25,39 +24,13 @@ class StreamInput:
     url: str
     headers: dict[str, str] = field(default_factory=dict)
     stream_type: str | None = None
+    title: str | None = None
+    subtitles: list[str] = field(default_factory=list)
 
 
 def parse_stream_input(raw_input: str) -> StreamInput:
-    """
-    Supports:
-
-    1. Plain URL:
-       https://example.com/path/master.m3u8?token=...
-
-    2. Stream Detector format:
-       URL|User-Agent=...&Referer=...
-    """
-
-    raw_input = raw_input.strip()
-
-    if "|" not in raw_input:
-        return StreamInput(url=raw_input)
-
-    url, encoded_headers = raw_input.split("|", 1)
-
-    headers = {
-        name.strip(): value.strip()
-        for name, value in parse_qsl(
-            encoded_headers,
-            keep_blank_values=True,
-        )
-        if name.strip()
-    }
-
-    return StreamInput(
-        url=url.strip(),
-        headers=headers,
-    )
+    """Wrap a plain URL without interpreting embedded header syntax."""
+    return StreamInput(url=raw_input.strip())
 
 
 def detect_stream_type(stream: StreamInput) -> str | None:
