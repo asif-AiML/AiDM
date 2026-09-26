@@ -21,9 +21,9 @@ AiDM should decide what the input is and route it without asking the user to und
 
 ## Project status
 
-AiDM has reached its **feature-complete beta-candidate architecture**.
+AiDM has reached its **feature-complete beta architecture**.
 
-The main development work is complete. The remaining beta-release gate is final real-world validation and regression testing before the unified integration branch is merged to `main` and tagged.
+The first beta release, `v0.1.0-beta`, is now published on `main` after the final real-world validation and regression suite passed successfully, including the Stream Inspector media + subtitle workflow.
 
 Validated core capabilities include:
 
@@ -43,7 +43,7 @@ Validated core capabilities include:
 - optional subtitle sidecar workflow;
 - unified routing that keeps these workflows separated instead of forcing every input through one downloader.
 
-The normal maintenance model after beta is intended to become:
+The normal maintenance model from this point is:
 
 ```text
 main
@@ -990,7 +990,7 @@ Those can be added later when real usage provides evidence that they are worth t
 
 ## Version
 
-The planned first beta release is:
+Current beta release:
 
 ```text
 v0.1.0-beta
@@ -998,7 +998,7 @@ v0.1.0-beta
 
 AiDM and AIDM Stream Inspector intentionally use aligned early versioning because they were developed as companion halves of the same browser-assisted download architecture.
 
-The tag should be created on `main` after the final real-world beta regression gate passes.
+The `v0.1.0-beta` tag marks the first completed beta baseline on `main`.
 
 ---
 
