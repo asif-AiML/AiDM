@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui_input import validate_gui_input
+
 
 class GuiState(Enum):
     EMPTY = auto()
@@ -86,12 +88,15 @@ class AiDMWindow(QMainWindow):
         layout.addStretch()
 
         self.setCentralWidget(content)
+        self.input_result = validate_gui_input("")
         self.input_field.textChanged.connect(self.on_input_changed)
         self.set_state(GuiState.EMPTY)
 
     def on_input_changed(self, text: str) -> None:
-        # Reserve the inspection state without classifying or inspecting input.
-        self.set_state(GuiState.INSPECTING if text.strip() else GuiState.EMPTY)
+        self.input_result = validate_gui_input(text)
+        # Parser validity alone never makes an input ready to download.
+        empty = not self.input_result.argv and self.input_result.error is None
+        self.set_state(GuiState.EMPTY if empty else GuiState.INSPECTING)
 
     def set_state(self, state: GuiState) -> None:
         """Apply all state-dependent presentation in one place."""
@@ -115,10 +120,13 @@ class AiDMWindow(QMainWindow):
         self.progress.setVisible(downloading)
         self.progress.setEnabled(False)
         self.active_status.setVisible(state == GuiState.INSPECTING or downloading)
-        self.active_status.setText(
-            "Download status placeholder (no download running)"
-            if downloading else "Inspection pending — not implemented yet"
-        )
+        if downloading:
+            status = "Download status placeholder (no download running)"
+        elif self.input_result.error is not None:
+            status = "Input incomplete or invalid — continue editing"
+        else:
+            status = "Inspection pending — not implemented yet"
+        self.active_status.setText(status)
         self.abort_button.setVisible(downloading)
         self.abort_button.setEnabled(False)
         self.result_message.setText({
