@@ -1,3 +1,22 @@
+## PySide6 (GUI only)
+
+The optional GUI requires PySide6. Install it into the Python environment used
+to launch the GUI; the CLI does not require it.
+
+```bash
+python3 -m pip install PySide6
+```
+
+Verify the import and launch the empty application window from the repository root:
+
+```bash
+python3 -c "from PySide6.QtWidgets import QApplication, QMainWindow"
+python3 aidm_gui.py
+```
+
+Closing the window exits the application. The CLI remains available separately
+through `python3 aidm.py ...`.
+
 ## Yt-dlp
 
 ### First-Time Installation
