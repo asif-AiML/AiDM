@@ -2,15 +2,7 @@
 
 import argparse
 import sys
-from urllib.parse import urlparse
 
-from detector import (
-    is_torrent_file_path,
-    is_youtube_playlist_url,
-    is_youtube_url,
-    looks_like_direct_file,
-    normalize_youtube_video_url,
-)
 from downloader import (
     download_direct,
     download_direct_bulk,
@@ -20,7 +12,13 @@ from downloader import (
     download_torrent,
     download_with_ytdlp,
 )
-from stream_parser import StreamInput, detect_stream_type, parse_stream_input
+from inspection import (
+    InputKind,
+    build_stream_input_from_args,
+    classify_input,
+    has_stream_inspector_args,
+)
+from stream_parser import StreamInput
 from youtube import download_youtube, download_youtube_playlist
 
 
@@ -61,34 +59,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return build_parser().parse_args(argv)
 
 
-def build_stream_input_from_args(
-    args: argparse.Namespace,
-    media_url: str,
-) -> StreamInput:
-    """Copy parsed handoff values into a stream input without routing it."""
-    headers = {}
-    if args.user_agent is not None:
-        headers["User-Agent"] = args.user_agent
-    if args.referer is not None:
-        headers["Referer"] = args.referer
-
-    return StreamInput(
-        url=media_url,
-        headers=headers,
-        title=args.title,
-        subtitles=list(args.subtitle),
-    )
-
-
-def has_stream_inspector_args(args: argparse.Namespace) -> bool:
-    return (
-        args.user_agent is not None
-        or args.referer is not None
-        or bool(args.subtitle)
-        or args.title is not None
-    )
-
-
 def download_media_with_sidecar(stream: StreamInput) -> int:
     """Download main media before attempting an optional subtitle sidecar."""
     if stream.stream_type in {"hls", "dash"}:
@@ -123,86 +93,48 @@ def download_media_with_sidecar(stream: StreamInput) -> int:
 
 
 def run_from_args(args: argparse.Namespace) -> int:
-    if has_stream_inspector_args(args) and len(args.urls) != 1:
-        print("Error: Stream Inspector handoff expects exactly one selected media URL.")
+    result = classify_input(args)
+    route = result.route
+
+    if result.error is not None:
+        print(result.error)
         return 2
 
-    if len(args.urls) > 1:
-        if all(is_youtube_url(url) for url in args.urls):
-            youtube_urls = [
-                normalize_youtube_video_url(url)
-                for url in args.urls
-            ]
+    if route == InputKind.YOUTUBE_BULK:
+        print(f"{len(result.urls)} YouTube URLs detected.✅")
+        return download_youtube(result.urls)
 
-            print(f"{len(youtube_urls)} YouTube URLs detected.✅")
-            return download_youtube(youtube_urls)
+    if route == InputKind.DIRECT_BULK:
+        print(f"{len(result.urls)} Direct URLs Detected✅")
+        while True:
+            print("Choose Mode: [1/2]")
+            print()
+            print("1 - Sequential")
+            print("2 - Parallel")
+            mode = input().strip()
+            if mode == "1":
+                return download_direct_bulk_sequential(result.urls)
+            if mode == "2":
+                return download_direct_bulk(result.urls)
 
-        direct_urls = [
-            urlparse(url).scheme in {"http", "https"}
-            and not is_youtube_url(url)
-            and looks_like_direct_file(url)
-            for url in args.urls
-        ]
+    if route == InputKind.TORRENT:
+        return download_torrent(result.urls[0])
 
-        if all(direct_urls):
-            print(f"{len(args.urls)} Direct URLs Detected✅")
-
-            while True:
-                print("Choose Mode: [1/2]")
-                print()
-                print("1 - Sequential")
-                print("2 - Parallel")
-
-                mode = input().strip()
-
-                if mode == "1":
-                    return download_direct_bulk_sequential(args.urls)
-
-                if mode == "2":
-                    return download_direct_bulk(args.urls)
-
-        print(
-            "Error: bulk mode supports only all-YouTube or all-direct URLs; "
-            "mixed batches are unsupported."
-        )
-        return 2
-
-    raw_input = args.urls[0]
-
-    if is_torrent_file_path(raw_input):
-        return download_torrent(raw_input)
-
-    if has_stream_inspector_args(args):
-        stream = build_stream_input_from_args(args, raw_input)
-    else:
-        stream = parse_stream_input(raw_input)
-    parsed_url = urlparse(stream.url)
-
-    if parsed_url.scheme not in {"http", "https"}:
-        print("Error: only HTTP and HTTPS URLs are supported.")
-        return 2
-
-    if is_youtube_playlist_url(stream.url):
+    if route == InputKind.YOUTUBE_PLAYLIST:
         print("YouTube playlist detected. ✅")
-        return download_youtube_playlist(stream.url)
+        return download_youtube_playlist(result.urls[0])
 
-    if is_youtube_url(stream.url):
-        youtube_url = normalize_youtube_video_url(stream.url)
-        return download_youtube([youtube_url])
+    if route == InputKind.YOUTUBE_SINGLE:
+        return download_youtube(result.urls)
 
-    stream.stream_type = detect_stream_type(stream)
-
-    if stream.stream_type in {"hls", "dash"}:
-        return download_media_with_sidecar(stream)
-
-    if stream.stream_type == "vtt":
+    if route == InputKind.VTT:
         print("Detected a WebVTT subtitle stream, not the main video.")
         return 3
 
-    if looks_like_direct_file(stream.url):
-        return download_direct(stream.url)
+    if route == InputKind.DIRECT_SINGLE:
+        return download_direct(result.urls[0])
 
-    return download_media_with_sidecar(stream)
+    return download_media_with_sidecar(result.stream)
 
 
 def main() -> int:

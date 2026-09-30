@@ -1,3 +1,6 @@
 __pycache__/
 *.py[cod]
 .vscode
+
+# Local regression checks (kept out of Git by project preference)
+/tests/
