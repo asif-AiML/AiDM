@@ -3,6 +3,10 @@
 from contextlib import redirect_stdout
 import io
 import json
+from pathlib import Path
+import shutil
+import subprocess
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
@@ -73,18 +77,38 @@ class YouTubeQualityTests(unittest.TestCase):
                         youtube.build_youtube_command(len(urls)) + ["-f", "bestaudio/best"] + extra + urls
                     )
 
-    def test_format_height_limit_and_original_default(self):
-        self.assertEqual(youtube.build_youtube_format(1080), "bv[height<=1080]+ba/b[height<=1080]")
-        self.assertEqual(youtube.build_youtube_format(None), "bv*[vcodec^=vp09]+ba[acodec=opus]/bv*+ba/b")
+    def test_format_height_limit_and_mp4_preference(self):
+        for height in [None, 480, 1080]:
+            with self.subTest(height=height):
+                expression = youtube.build_youtube_format(height)
+                branches = expression.split("/")
+                self.assertEqual(len(branches), 3)
+                self.assertIn("ba[ext=m4a]", branches[0])
+                self.assertTrue(branches[1].endswith("+ba"))
+                for branch in branches:
+                    if height is not None:
+                        self.assertIn(f"[height<={height}]", branch)
+                    else:
+                        self.assertNotIn("height", branch)
+                command = youtube.build_youtube_video_command(height)
+                self.assertEqual(command[command.index("--format-sort") + 1], "res,ext:mp4:m4a")
+
+    def assert_video_policy(self, command, height):
+        for option in ["--merge-output-format", "--remux-video"]:
+            self.assertEqual(command.count(option), 1)
+            self.assertEqual(command[command.index(option) + 1], "mp4")
+        self.assertEqual(command[command.index("-f") + 1], youtube.build_youtube_format(height))
+        for forbidden in ["--recode-video", "--postprocessor-args", "-c:v", "libx264"]:
+            self.assertNotIn(forbidden, command)
 
     def test_video_api_applies_one_format_to_all_urls(self):
         for height in [None, 720, 1080]:
             with self.subTest(height=height), patch.object(youtube, "run_command", return_value=9) as run:
-                urls = ["first", "second"]
-                self.assertEqual(youtube.download_youtube_video(urls, max_height=height), 9)
-                run.assert_called_once_with(
-                    youtube.build_youtube_command(2) + ["-f", youtube.build_youtube_format(height)] + urls
-                )
+                for urls in [["first"], ["first", "second"]]:
+                    run.reset_mock()
+                    self.assertEqual(youtube.download_youtube_video(urls, max_height=height), 9)
+                    run.assert_called_once_with(youtube.build_youtube_video_command(height, len(urls)) + urls)
+                    self.assert_video_policy(run.call_args.args[0], height)
 
     def test_playlist_selected_and_fallback_commands_unchanged(self):
         for qualities, height in [([1080, 720], 720), ([], None)]:
@@ -100,10 +124,8 @@ class YouTubeQualityTests(unittest.TestCase):
                 else:
                     choose.assert_not_called()
                 mode.assert_not_called()
-                run.assert_called_once_with(youtube.build_youtube_command() + [
-                    "--yes-playlist", "-f", youtube.build_youtube_format(height),
-                    "--merge-output-format", "mp4", "playlist",
-                ])
+                run.assert_called_once_with(youtube.build_youtube_video_command(height) + ["--yes-playlist", "playlist"])
+                self.assert_video_policy(run.call_args.args[0], height)
         self.assertIn("Could not determine playlist qualities; using best available quality.", self.output.getvalue())
 
     def test_shared_discovery_handles_video_and_playlist_metadata(self):
@@ -133,6 +155,50 @@ class YouTubeQualityTests(unittest.TestCase):
         with patch("builtins.input", side_effect=["bad", "0", "3", "2"]) as prompt:
             self.assertEqual(youtube.choose_youtube_quality([1080, 720]), 720)
             self.assertEqual(prompt.call_count, 4)
+
+
+@unittest.skipUnless(shutil.which("yt-dlp"), "Offline selection fixtures require yt-dlp")
+class OfflineFormatSelectionTests(unittest.TestCase):
+    """Exercise actual yt-dlp sorting, without fetching or downloading media."""
+
+    def test_resolution_before_container_and_native_preference(self):
+        def video(name, height, ext, audio=False):
+            return dict(format_id=name, height=height, width=height * 16 // 9,
+                        ext=ext, vcodec="avc1" if ext == "mp4" else "vp9",
+                        acodec=("aac" if ext == "mp4" else "opus") if audio else "none",
+                        url=f"https://example.invalid/{name}.{ext}")
+
+        aac = dict(format_id="aac", ext="m4a", vcodec="none", acodec="mp4a.40.2",
+                   url="https://example.invalid/audio.m4a")
+        opus = dict(format_id="audio-opus", ext="webm", vcodec="none", acodec="opus",
+                    url="https://example.invalid/audio.webm")
+        cases = [
+            (None, [video("native", 1080, "mp4"), video("high", 2160, "webm"), aac, opus], "high+aac"),
+            (1080, [video("native", 480, "mp4"), video("high", 1080, "webm"), aac], "high+aac"),
+            (1080, [video("native", 1080, "mp4"), video("other", 1080, "webm"), aac, opus], "native+aac"),
+            (480, [video("native", 480, "mp4"), video("high", 1080, "webm"), aac], "native+aac"),
+            (1080, [video("lower", 720, "webm"), opus], "lower+audio-opus"),
+            (480, [video("combined", 480, "webm", True)], "combined"),
+            (None, [video("native", 1080, "mp4"), video("combined", 2160, "webm", True), aac], "combined"),
+        ]
+        with TemporaryDirectory(prefix="aidm-format-") as directory:
+            fixture = Path(directory) / "fixture.json"
+            for height, formats, expected in cases:
+                with self.subTest(height=height, expected=expected):
+                    fixture.write_text(json.dumps({"id": "fixture", "title": "Fixture", "formats": formats,
+                                                   "extractor": "generic", "extractor_key": "Generic"}))
+                    # The common downloader args aren't needed in simulation;
+                    # retain all video policy args from the production helper.
+                    policy = youtube.build_youtube_video_command(height)[len(youtube.build_youtube_command()):]
+                    completed = subprocess.run([
+                        "yt-dlp", "--ignore-config", "--no-plugin-dirs", "--no-cache-dir",
+                        "--simulate", "--no-check-formats", "--load-info-json", str(fixture),
+                        "--print", "%(format_id)s",
+                        *policy,
+                    ], capture_output=True, text=True, timeout=15, cwd=directory)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertEqual(completed.stdout.strip(), expected)
+                    self.assertEqual([p.name for p in Path(directory).iterdir()], ["fixture.json"])
 
 
 if __name__ == "__main__":

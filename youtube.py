@@ -6,7 +6,7 @@ from utils import run_command
 
 
 YOUTUBE_VIDEO_FORMAT = (
-    "bv*[vcodec^=vp09]+ba[acodec=opus]/bv*+ba/b"
+    "bv*+ba[ext=m4a]/bv*+ba/b"
 )
 
 
@@ -88,11 +88,14 @@ def choose_youtube_quality(qualities: list[int]) -> int | None:
 
 
 def build_youtube_format(max_height: int | None = None) -> str:
+    # MP4 video preference lives in the shared command's resolution-first sort.
+    # An ext=mp4 video filter here could discard higher-resolution alternatives.
     if max_height is None:
         return YOUTUBE_VIDEO_FORMAT
 
     return (
-        f"bv[height<={max_height}]+ba/"
+        f"bv*[height<={max_height}]+ba[ext=m4a]/"
+        f"bv*[height<={max_height}]+ba/"
         f"b[height<={max_height}]"
     )
 
@@ -140,17 +143,28 @@ def build_youtube_command(total_videos: int | None = None) -> list[str]:
     return command
 
 
+def build_youtube_video_command(
+    max_height: int | None = None,
+    total_videos: int | None = None,
+) -> list[str]:
+    """Resolution first, native MP4/M4A preferred, stream-copy final MP4."""
+    command = build_youtube_command(total_videos)
+    command.extend([
+        "-f", build_youtube_format(max_height),
+        "--format-sort", "res,ext:mp4:m4a",
+        "--format-sort-force",
+        "--merge-output-format", "mp4",
+        "--remux-video", "mp4",
+    ])
+    return command
+
+
 def download_youtube_video(urls: list[str], max_height: int | None = None) -> int:
     print("Mode: YouTube video")
     print("Extractor: yt-dlp")
     print("Download engine: aria2c where supported")
 
-    command = build_youtube_command(len(urls))
-
-    command.extend([
-        "-f",
-        build_youtube_format(max_height),
-    ])
+    command = build_youtube_video_command(max_height, len(urls))
 
     command.extend(urls)
 
@@ -176,14 +190,10 @@ def download_youtube_playlist(url: str) -> int:
     if selected_height is not None:
         print(f"Selected quality: {selected_height}p")
 
-    command = build_youtube_command()
+    command = build_youtube_video_command(selected_height)
 
     command.extend([
         "--yes-playlist",
-        "-f",
-        build_youtube_format(selected_height),
-        "--merge-output-format",
-        "mp4",
         url,
     ])
 
