@@ -140,7 +140,7 @@ def build_youtube_command(total_videos: int | None = None) -> list[str]:
     return command
 
 
-def download_youtube_video(urls: list[str]) -> int:
+def download_youtube_video(urls: list[str], max_height: int | None = None) -> int:
     print("Mode: YouTube video")
     print("Extractor: yt-dlp")
     print("Download engine: aria2c where supported")
@@ -149,7 +149,7 @@ def download_youtube_video(urls: list[str]) -> int:
 
     command.extend([
         "-f",
-        YOUTUBE_VIDEO_FORMAT,
+        build_youtube_format(max_height),
     ])
 
     command.extend(urls)
@@ -241,7 +241,21 @@ def download_youtube(urls: list[str]) -> int:
     mode = choose_youtube_mode()
 
     if mode == "video":
-        result = download_youtube_video(urls)
+        # One representative lookup for both single and bulk video requests.
+        qualities = get_available_youtube_qualities(urls[0])
+        if qualities:
+            selected_height = choose_youtube_quality(qualities)
+        else:
+            print(
+                "Could not determine YouTube video qualities; "
+                "using best available quality."
+            )
+            selected_height = None
+
+        if selected_height is not None:
+            print(f"Selected quality: {selected_height}p")
+
+        result = download_youtube_video(urls, max_height=selected_height)
 
     elif mode == "audio":
         result = download_youtube_audio(urls)

@@ -3,4 +3,6 @@ __pycache__/
 .vscode
 
 # Local regression checks (kept out of Git by project preference)
-/tests/
+/tests/*
+# Persistent backend quality regressions (Milestone 7.2)
+!/tests/test_youtube_quality.py

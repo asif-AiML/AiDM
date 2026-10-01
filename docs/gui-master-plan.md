@@ -508,11 +508,11 @@ Save to
                     [ Download ]
 ```
 
-There is currently no explicit quality selector for single YouTube videos.
-
-Therefore the first GUI must not invent one.
-
-If single-video quality selection is added in the future, it should be implemented backend-first.
+Milestone 7.2 adds backend/CLI video-quality selection after choosing Video,
+reusing playlist discovery and the maximum-height format selector. Discovery
+failure retains the existing best-available fallback. Audio/WAV are unchanged.
+GUI exposure is pending; DownloadJob remains playlist-quality-only until
+Milestone 7.3, after real CLI testing.
 
 ---
 
@@ -541,9 +541,9 @@ Save to
                     [ Download ]
 ```
 
-There is currently no explicit quality selector for YouTube bulk.
-
-Therefore the first GUI must not add one.
+Milestone 7.2 adds backend/CLI Video quality selection using only the first
+normalized video URL as the representative source. One selected maximum height
+applies to all videos, allowing lower available heights. GUI exposure is pending.
 
 ---
 
@@ -1021,7 +1021,8 @@ destination:
   ...
 ```
 
-No GUI quality field is required because the backend does not currently support explicit single-video quality selection.
+The current DownloadJob has no single-video quality field. Backend support was
+added in Milestone 7.2; model changes await Milestone 7.3 and GUI exposure follows later.
 
 ## YouTube bulk
 
