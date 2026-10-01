@@ -19,7 +19,8 @@ class BulkMode(Enum):
     PARALLEL = "parallel"
 
 
-class PlaylistQuality(Enum):
+class VideoQuality(Enum):
+    """Explicit best-available fallback; None means no choice yet."""
     BEST = "best"
 
 
@@ -28,7 +29,7 @@ class DownloadJob:
     kind: InputKind
     urls: tuple[str, ...]
     mode: YouTubeMode | None = None
-    playlist_quality: int | PlaylistQuality | None = None
+    video_quality: int | VideoQuality | None = None
     bulk_mode: BulkMode | None = None
     title: str | None = None
     headers: Mapping[str, str] = field(default_factory=dict)
@@ -79,12 +80,16 @@ class DownloadJob:
                 raise ValueError("YouTube single/bulk requires an explicit YouTubeMode")
         elif self.mode is not None:
             raise ValueError("mode is only valid for YouTube single/bulk")
-        if route == InputKind.YOUTUBE_PLAYLIST:
-            if not (type(self.playlist_quality) is int and self.playlist_quality > 0
-                    or self.playlist_quality is PlaylistQuality.BEST):
-                raise ValueError("Playlist requires a positive height or explicit PlaylistQuality.BEST")
-        elif self.playlist_quality is not None:
-            raise ValueError("playlist_quality is only valid for YouTube playlists")
+        needs_video_quality = route == InputKind.YOUTUBE_PLAYLIST or (
+            route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK}
+            and self.mode == YouTubeMode.VIDEO
+        )
+        if needs_video_quality:
+            if not (type(self.video_quality) is int and self.video_quality > 0
+                    or self.video_quality is VideoQuality.BEST):
+                raise ValueError("YouTube video requires a positive maximum height or explicit VideoQuality.BEST")
+        elif self.video_quality is not None:
+            raise ValueError("video_quality is only valid for YouTube VIDEO mode or playlists")
         if route == InputKind.DIRECT_BULK:
             if not isinstance(self.bulk_mode, BulkMode):
                 raise ValueError("Direct bulk requires an explicit BulkMode")
@@ -98,7 +103,7 @@ def build_download_job(
     result: InspectionResult,
     *,
     mode: YouTubeMode | None = None,
-    playlist_quality: int | PlaylistQuality | None = None,
+    video_quality: int | VideoQuality | None = None,
     bulk_mode: BulkMode | None = None,
 ) -> DownloadJob:
     """Snapshot classification and explicit choices; never inspect or execute."""
@@ -119,7 +124,7 @@ def build_download_job(
     elif result.stream and (result.stream.headers or result.stream.subtitles):
         raise ValueError("Browser context requires an Inspector classification")
     return DownloadJob(
-        kind=result.kind, urls=urls, mode=mode, playlist_quality=playlist_quality,
+        kind=result.kind, urls=urls, mode=mode, video_quality=video_quality,
         bulk_mode=bulk_mode, title=title, headers=headers, subtitles=subtitles,
         route_kind=result.route_kind,
     )

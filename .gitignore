@@ -6,3 +6,6 @@ __pycache__/
 /tests/*
 # Persistent backend quality regressions (Milestone 7.2)
 !/tests/test_youtube_quality.py
+# Persistent shared model/API regressions (Milestone 7.3)
+!/tests/test_download_job.py
+!/tests/test_gui_download_job.py

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from download_job import DownloadJob, YouTubeMode, BulkMode, PlaylistQuality, build_download_job
+from download_job import DownloadJob, YouTubeMode, BulkMode, VideoQuality, build_download_job
 from gui_input import validate_gui_input
 from gui_metadata import MetadataProcess
 from inspection import classify_input, InputKind, MetadataStatus
@@ -199,7 +199,7 @@ class AiDMWindow(QMainWindow):
 
     def build_job_for_testing(
         self, *, mode: YouTubeMode | None = None,
-        playlist_quality: int | PlaylistQuality | None = None,
+        video_quality: int | VideoQuality | None = None,
         bulk_mode: BulkMode | None = None,
     ) -> DownloadJob:
         """Temporary development helper: return a job without state changes/execution."""
@@ -210,7 +210,7 @@ class AiDMWindow(QMainWindow):
             raise ValueError("Torrent GUI support is deferred")
         return build_download_job(
             self.inspection_result, mode=mode,
-            playlist_quality=playlist_quality, bulk_mode=bulk_mode,
+            video_quality=video_quality, bulk_mode=bulk_mode,
         )
 
     def start_metadata(self) -> None:

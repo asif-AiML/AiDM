@@ -511,8 +511,12 @@ Save to
 Milestone 7.2 adds backend/CLI video-quality selection after choosing Video,
 reusing playlist discovery and the maximum-height format selector. Discovery
 failure retains the existing best-available fallback. Audio/WAV are unchanged.
-GUI exposure is pending; DownloadJob remains playlist-quality-only until
-Milestone 7.3, after real CLI testing.
+The backend has passed real CLI testing. Milestone 7.3 represents this choice
+as `DownloadJob.video_quality`; visible GUI controls remain Milestone 8 work.
+
+Milestone 8 target: show Download as [ Video ] [ Original Audio ] [ WAV ].
+Only when Video is selected, show Quality [ 1080p ▼ ]. Hide the quality control
+for Original Audio and WAV. These controls are not implemented yet.
 
 ---
 
@@ -545,6 +549,9 @@ Milestone 7.2 adds backend/CLI Video quality selection using only the first
 normalized video URL as the representative source. One selected maximum height
 applies to all videos, allowing lower available heights. GUI exposure is pending.
 
+Milestone 8 target: the same mode-first controls as single video, with Quality
+visible only for Video. One maximum-height choice applies to the entire batch.
+
 ---
 
 # 15. YouTube playlist behavior
@@ -552,6 +559,9 @@ applies to all videos, allowing lower available heights. GUI exposure is pending
 Current playlist behavior includes a quality selector.
 
 Playlist audio modes are not part of the current backend and are not required for the first GUI.
+
+Milestone 8 target: show the quality selector only, without a Video / Original
+Audio / WAV mode selector. The visible control is not implemented yet.
 
 Example:
 
@@ -1021,8 +1031,9 @@ destination:
   ...
 ```
 
-The current DownloadJob has no single-video quality field. Backend support was
-added in Milestone 7.2; model changes await Milestone 7.3 and GUI exposure follows later.
+`video_quality` is required for Video: a positive maximum height or explicit
+`VideoQuality.BEST`. It must be absent for Original Audio and WAV. The model
+supports this now; Milestone 8 will expose the conditional quality control.
 
 ## YouTube bulk
 
@@ -1040,7 +1051,8 @@ destination:
   ...
 ```
 
-No GUI quality selector.
+The same `video_quality` rule applies as for single video. Bulk discovers
+qualities from the first normalized URL only. GUI controls await Milestone 8.
 
 ## YouTube playlist
 
@@ -1051,8 +1063,8 @@ source:
 url:
   ...
 
-quality:
-  selected supported playlist quality
+video_quality:
+  selected maximum height or explicit VideoQuality.BEST
 
 destination:
   ...
@@ -1080,19 +1092,23 @@ This keeps the job model aligned with real backend capability.
 
 ---
 
-## Milestone 7 implementation boundary
+## Milestone 7.3 implementation boundary
 
 `download_job.py` provides a Qt-independent, frozen `DownloadJob` and
-`build_download_job(result, *, mode=None, playlist_quality=None, bulk_mode=None)`.
+`build_download_job(result, *, mode=None, video_quality=None, bulk_mode=None)`.
 It reuses `InputKind`, copies URLs/subtitles into tuples and headers into a
 read-only mapping, and rejects incompatible or missing choices with `ValueError`.
 There is no execution or destination field yet; destination selection remains
 Milestone 9 work.
 
 `YouTubeMode` supplies VIDEO, ORIGINAL_AUDIO and WAV for single/bulk video jobs.
-ORIGINAL_AUDIO describes the CLI's existing `audio` mode. Playlist quality is a
-positive maximum height, or explicit `PlaylistQuality.BEST` for the existing
-best-available fallback. No quality availability lookup occurs in this builder.
+ORIGINAL_AUDIO describes the CLI's existing `audio` mode. `video_quality` is a
+positive maximum height, or explicit `VideoQuality.BEST` for the existing
+best-available fallback. It is required for YouTube single/bulk VIDEO jobs and
+playlists, including those underlying Inspector routes. `None` means a missing
+required choice for these jobs, not an implicit fallback. Audio/WAV and unrelated
+routes reject any supplied quality. Playlists still reject mode selections.
+No quality availability lookup occurs in this builder.
 `BulkMode` supplies SEQUENTIAL and PARALLEL for direct bulk. Choices have no
 implicit defaults.
 
@@ -1161,7 +1177,8 @@ GUI designer wants a control
 → backend is forced to grow a feature
 ```
 
-If explicit quality selection for single or bulk YouTube is desired later:
+Single/bulk video quality followed this sequence in Milestones 7.2–7.3;
+GUI exposure remains the Milestone 8 target:
 
 ```text
 implement backend
@@ -1389,7 +1406,7 @@ Primary goals:
 
 Not required for the first GUI:
 
-- new YouTube quality features;
+- further YouTube quality capabilities beyond the verified maximum-height selection;
 - playlist audio support;
 - full torrent UI;
 - giant per-item queue dashboard;
