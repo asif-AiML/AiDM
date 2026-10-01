@@ -641,7 +641,9 @@ The exact default can be decided later based on real behavior and UX testing.
 
 # 17. Destination folder selection
 
-Before a download begins, the GUI should show the destination folder.
+Once passive inspection produces usable input, the GUI shows the destination
+folder alongside Download. It stays visible in NEEDS_OPTIONS during mode/quality
+configuration. EMPTY, invalid and unsupported input keep this section hidden.
 
 Preferred behavior:
 
@@ -654,15 +656,26 @@ The user can click Browse to open the native folder picker.
 
 The application should not force a folder-selection dialog for every download.
 
-Recommended behavior:
+Milestone 9 behavior:
 
-- first run: use a sensible default such as `~/Downloads`;
-- show the current destination before starting;
-- remember the user's most recently selected folder;
-- allow Browse at any time before the job starts;
-- later, optionally add a setting such as "Ask where to save before every download".
+- Default to an existing accessible `Path.home() / "Downloads"`; otherwise use home.
+  Do not create Downloads or use the repository working directory as the default.
+- Display the full resolved path in a read-only, horizontally scrollable field
+  with a full-path tooltip and a native Browse directory picker.
+- Start Browse at the current folder. Cancelling leaves it unchanged.
+- Remember valid Browse selections with `QSettings("AiDM", "AiDM")`, key
+  `downloads/destination`. On startup, missing, non-directory or inaccessible
+  saved paths fall back to Downloads/home.
+- Preserve destination across input changes; reset only job-specific choices.
+- Changing the folder rebuilds a completed DownloadJob without changing mode,
+  quality or bulk selections. Pending quality discovery continues unchanged.
+- The GUI validates directory existence and read/traverse access. This does not
+  promise future write success; execution must handle write failures later.
 
-This avoids repeated unnecessary interaction.
+Destination is general job context, not an intent-driven secondary choice.
+Enter retains the primary Download behavior and does not open Browse.
+Execution and backend output-directory handling are still deferred. Tests inject
+temporary INI settings and do not access the user's real preferences.
 
 ---
 
@@ -1123,11 +1136,14 @@ This keeps the job model aligned with real backend capability.
 ## Milestone 7.3 implementation boundary
 
 `download_job.py` provides a Qt-independent, frozen `DownloadJob` and
-`build_download_job(result, *, mode=None, video_quality=None, bulk_mode=None)`.
+`build_download_job(result, *, destination, mode=None, video_quality=None, bulk_mode=None)`.
 It reuses `InputKind`, copies URLs/subtitles into tuples and headers into a
 read-only mapping, and rejects incompatible or missing choices with `ValueError`.
-There is no execution or destination field yet; destination selection remains
-Milestone 9 work.
+Milestone 9 adds required `destination: str`, normalized lexically as an absolute
+path. Empty, relative or NUL-containing values are rejected. The Qt-independent
+model does not probe directory existence or permissions; the GUI handles those
+checks. The test helper automatically supplies the GUI's selected destination.
+There is no execution yet.
 
 `YouTubeMode` supplies VIDEO, ORIGINAL_AUDIO and WAV for single/bulk video jobs.
 ORIGINAL_AUDIO describes the CLI's existing `audio` mode. `video_quality` is a

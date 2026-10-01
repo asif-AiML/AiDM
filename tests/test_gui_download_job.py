@@ -1,9 +1,11 @@
 import os
 import unittest
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
+    from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 except ImportError:
     raise unittest.SkipTest("GUI job checks require PySide6")
@@ -19,7 +21,10 @@ class GuiDownloadJobTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_helper_builds_without_execution_or_ui_transition(self):
-        window = AiDMWindow()
+        directory = TemporaryDirectory(prefix="aidm-test-settings-")
+        self.addCleanup(directory.cleanup)
+        settings = QSettings(f"{directory.name}/settings.ini", QSettings.Format.IniFormat)
+        window = AiDMWindow(settings=settings)
         self.addCleanup(window.close)
         with patch("subprocess.Popen", side_effect=AssertionError("Unexpected subprocess")), \
                 patch("urllib.request.urlopen", side_effect=AssertionError("Unexpected probe")), \
@@ -30,6 +35,7 @@ class GuiDownloadJobTests(unittest.TestCase):
             window.set_state(GuiState.NEEDS_OPTIONS)
             job = window.build_job_for_testing(mode=YouTubeMode.ORIGINAL_AUDIO)
             self.assertEqual(job.mode, YouTubeMode.ORIGINAL_AUDIO)
+            self.assertEqual(job.destination, window.destination)
             for quality in (1080, VideoQuality.BEST):
                 job = window.build_job_for_testing(mode=YouTubeMode.VIDEO, video_quality=quality)
                 self.assertEqual(job.video_quality, quality)

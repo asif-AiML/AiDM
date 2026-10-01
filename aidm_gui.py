@@ -4,14 +4,17 @@ import sys
 from dataclasses import replace
 from enum import Enum, auto
 from http.client import HTTPException
+import os
+from pathlib import Path
 from threading import Thread
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QComboBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -75,9 +78,35 @@ class GuiState(Enum):
     FAILED = auto()
 
 
+def existing_destination(value) -> str | None:
+    """Resolve an accessible directory; do not create it or test future writes."""
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        return None
+    try:
+        path = Path(value)
+        if not path.is_absolute():
+            return None
+        path = path.resolve(strict=True)
+        if path.is_dir() and os.access(path, os.R_OK | os.X_OK):
+            return str(path)
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return None
+
+
+def initial_destination(settings: QSettings) -> str:
+    remembered = existing_destination(settings.value("downloads/destination"))
+    if remembered is not None:
+        return remembered
+    home = Path.home()
+    return existing_destination(str(home / "Downloads")) or str(home.resolve())
+
+
 class AiDMWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, *, settings: QSettings | None = None) -> None:
         super().__init__()
+        self.settings = settings if settings is not None else QSettings("AiDM", "AiDM")
+        self.destination = initial_destination(self.settings)
         self.setWindowTitle("AiDM v0.1.0")
         self.resize(480, 200)
 
@@ -134,6 +163,22 @@ class AiDMWindow(QMainWindow):
         self.quality_choice.setAccessibleName("Maximum video quality")
         quality_layout.addWidget(self.quality_choice)
         self.quality_choice.currentIndexChanged.connect(self.on_quality_changed)
+        self.destination_section = QWidget()
+        destination_layout = QVBoxLayout(self.destination_section)
+        destination_layout.setContentsMargins(0, 0, 0, 0)
+        destination_layout.addWidget(QLabel("Save to"))
+        destination_row = QHBoxLayout()
+        self.destination_field = QLineEdit(self.destination)
+        self.destination_field.setReadOnly(True)
+        self.destination_field.setAccessibleName("Download destination")
+        self.destination_field.setMinimumWidth(0)
+        self.destination_field.setToolTip(self.destination)
+        self.destination_field.setCursorPosition(0)
+        self.browse_button = QPushButton("Browse")
+        self.browse_button.clicked.connect(self.browse_destination)
+        destination_row.addWidget(self.destination_field, 1)
+        destination_row.addWidget(self.browse_button)
+        destination_layout.addLayout(destination_row)
         self.download_button = QPushButton("Download")
         self.download_button.clicked.connect(self.on_download_intent)
         self.progress = QProgressBar()
@@ -153,6 +198,7 @@ class AiDMWindow(QMainWindow):
             self.mode_options,
             self.bulk_options,
             self.quality_options,
+            self.destination_section,
             self.active_status,
             self.download_button,
             self.progress,
@@ -193,6 +239,32 @@ class AiDMWindow(QMainWindow):
             shortcut.activated.connect(self.on_download_intent)
             self._enter_shortcuts.append(shortcut)
         self.set_state(GuiState.EMPTY)
+
+    def browse_destination(self):
+        selected = QFileDialog.getExistingDirectory(
+            self, "Choose download folder", self.destination,
+        )
+        if not selected:
+            return
+        destination = existing_destination(selected)
+        if destination is None:
+            self._configuration_error = "Selected folder is unavailable — choose another folder."
+            self.set_state(self.current_state)
+            return
+        self.destination = destination
+        self.destination_field.setText(destination)
+        self.destination_field.setToolTip(destination)
+        self.destination_field.setCursorPosition(0)
+        self.settings.setValue("downloads/destination", destination)
+        self.settings.sync()
+        self._execution_deferred = False
+        # Preserve all mode/quality selections and any active quality request.
+        self.update_configuration()
+
+    def checked_destination(self):
+        if existing_destination(self.destination) is None:
+            raise ValueError("Download folder is unavailable — choose another folder.")
+        return self.destination
 
     def make_options(self, label, choices, callback):
         container = QWidget()
@@ -336,7 +408,8 @@ class AiDMWindow(QMainWindow):
         if not missing:
             try:
                 self.download_job = build_download_job(
-                    self.inspection_result, mode=mode, video_quality=quality, bulk_mode=bulk,
+                    self.inspection_result, destination=self.checked_destination(),
+                    mode=mode, video_quality=quality, bulk_mode=bulk,
                 )
             except ValueError as error:
                 self._configuration_error = str(error)
@@ -396,7 +469,7 @@ class AiDMWindow(QMainWindow):
         if self.inspection_result.kind == InputKind.TORRENT:
             raise ValueError("Torrent GUI support is deferred")
         return build_download_job(
-            self.inspection_result, mode=mode,
+            self.inspection_result, destination=self.checked_destination(), mode=mode,
             video_quality=video_quality, bulk_mode=bulk_mode,
         )
 
@@ -480,6 +553,9 @@ class AiDMWindow(QMainWindow):
         self.bulk_options.setVisible(configuring and route == InputKind.DIRECT_BULK)
         self.quality_options.setVisible(configuring and not self._quality_pending
                                         and self.quality_choice.count() > 1)
+        self.destination_section.setVisible(
+            state in {GuiState.READY, GuiState.NEEDS_OPTIONS} and self.usable_input()
+        )
         self.download_button.setVisible(state == GuiState.READY)
         self.download_button.setEnabled(state == GuiState.READY and self.usable_input())
         for shortcut in self._enter_shortcuts:

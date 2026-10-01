@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+import os.path
 from types import MappingProxyType
 from typing import Mapping
 
@@ -28,6 +29,7 @@ class VideoQuality(Enum):
 class DownloadJob:
     kind: InputKind
     urls: tuple[str, ...]
+    destination: str
     mode: YouTubeMode | None = None
     video_quality: int | VideoQuality | None = None
     bulk_mode: BulkMode | None = None
@@ -38,6 +40,12 @@ class DownloadJob:
     route_kind: InputKind | None = None
 
     def __post_init__(self) -> None:
+        # Filesystem availability belongs to the frontend/execution boundary.
+        # Keep a normalized absolute snapshot without probing or creating paths.
+        if (not isinstance(self.destination, str) or not self.destination.strip()
+                or "\x00" in self.destination or not os.path.isabs(self.destination)):
+            raise ValueError("destination must be a non-empty absolute filesystem path")
+        object.__setattr__(self, "destination", os.path.normpath(self.destination))
         supported = {
             InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK,
             InputKind.YOUTUBE_PLAYLIST, InputKind.DIRECT_SINGLE,
@@ -102,6 +110,7 @@ class DownloadJob:
 def build_download_job(
     result: InspectionResult,
     *,
+    destination: str,
     mode: YouTubeMode | None = None,
     video_quality: int | VideoQuality | None = None,
     bulk_mode: BulkMode | None = None,
@@ -124,7 +133,7 @@ def build_download_job(
     elif result.stream and (result.stream.headers or result.stream.subtitles):
         raise ValueError("Browser context requires an Inspector classification")
     return DownloadJob(
-        kind=result.kind, urls=urls, mode=mode, video_quality=video_quality,
+        kind=result.kind, urls=urls, destination=destination, mode=mode, video_quality=video_quality,
         bulk_mode=bulk_mode, title=title, headers=headers, subtitles=subtitles,
         route_kind=result.route_kind,
     )

@@ -12,6 +12,16 @@ from stream_parser import StreamInput
 
 
 class DownloadJobTests(unittest.TestCase):
+    def test_destination_representation_without_filesystem_probe(self):
+        result = InspectionResult(InputKind.DIRECT_SINGLE, ["https://example.test/a.zip"])
+        job = build_download_job(result, destination="/nonexistent/aidm/../destination/")
+        self.assertEqual(job.destination, "/nonexistent/destination")
+        for value in (None, "", "  ", "relative/folder", "~/Downloads", "/bad\x00path", 42):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                build_download_job(result, destination=value)
+        with self.assertRaises(TypeError):
+            build_download_job(result)
+
     def test_youtube_single_modes(self):
         result = InspectionResult(
             kind=InputKind.YOUTUBE_SINGLE,
@@ -24,7 +34,7 @@ class DownloadJobTests(unittest.TestCase):
         ):
             with self.subTest(mode=mode):
                 quality = 1080 if mode == YouTubeMode.VIDEO else None
-                job = build_download_job(result, mode=mode, video_quality=quality)
+                job = build_download_job(result, destination="/tmp/aidm-model-fixture", mode=mode, video_quality=quality)
                 self.assertEqual(job.video_quality, quality)
                 self.assertEqual(job.kind, InputKind.YOUTUBE_SINGLE)
                 self.assertEqual(job.mode, mode)
@@ -43,7 +53,7 @@ class DownloadJobTests(unittest.TestCase):
         ):
             with self.subTest(mode=mode):
                 quality = 720 if mode == YouTubeMode.VIDEO else None
-                job = build_download_job(result, mode=mode, video_quality=quality)
+                job = build_download_job(result, destination="/tmp/aidm-model-fixture", mode=mode, video_quality=quality)
                 self.assertEqual(job.video_quality, quality)
                 self.assertEqual(job.kind, InputKind.YOUTUBE_BULK)
                 self.assertEqual(job.mode, mode)
@@ -56,7 +66,7 @@ class DownloadJobTests(unittest.TestCase):
         )
         for quality in (1080, VideoQuality.BEST):
             with self.subTest(quality=quality):
-                job = build_download_job(result, video_quality=quality)
+                job = build_download_job(result, destination="/tmp/aidm-model-fixture", video_quality=quality)
                 self.assertEqual(job.video_quality, quality)
 
     def test_direct_single_has_no_pre_download_title(self):
@@ -65,7 +75,7 @@ class DownloadJobTests(unittest.TestCase):
             urls=["https://example.com/software.exe"],
             title="software.exe",
         )
-        job = build_download_job(result)
+        job = build_download_job(result, destination="/tmp/aidm-model-fixture")
         self.assertEqual(job.kind, InputKind.DIRECT_SINGLE)
         self.assertIsNone(job.title)
 
@@ -77,7 +87,7 @@ class DownloadJobTests(unittest.TestCase):
         result = InspectionResult(kind=InputKind.DIRECT_BULK, urls=urls)
         for mode in (BulkMode.SEQUENTIAL, BulkMode.PARALLEL):
             with self.subTest(mode=mode):
-                job = build_download_job(result, bulk_mode=mode)
+                job = build_download_job(result, destination="/tmp/aidm-model-fixture", bulk_mode=mode)
                 self.assertEqual(job.bulk_mode, mode)
                 self.assertEqual(job.urls, tuple(urls))
 
@@ -87,14 +97,14 @@ class DownloadJobTests(unittest.TestCase):
             (InputKind.DASH, "https://example.com/manifest.mpd"),
         ):
             with self.subTest(kind=kind):
-                job = build_download_job(InspectionResult(kind=kind, urls=[url]))
+                job = build_download_job(InspectionResult(kind=kind, urls=[url]), destination="/tmp/aidm-model-fixture")
                 self.assertEqual(job.kind, kind)
                 self.assertEqual(job.urls, (url,))
 
     def test_generic_ytdlp_job(self):
         url = "https://example.com/watch/123"
         job = build_download_job(
-            InspectionResult(kind=InputKind.GENERIC_YTDLP, urls=[url])
+            InspectionResult(kind=InputKind.GENERIC_YTDLP, urls=[url]), destination="/tmp/aidm-model-fixture"
         )
         self.assertEqual(job.kind, InputKind.GENERIC_YTDLP)
         self.assertEqual(job.urls, (url,))
@@ -123,7 +133,7 @@ class DownloadJobTests(unittest.TestCase):
             route_kind=InputKind.HLS,
             title="Example Movie",
         )
-        job = build_download_job(result)
+        job = build_download_job(result, destination="/tmp/aidm-model-fixture")
 
         self.assertEqual(job.kind, InputKind.STREAM_INSPECTOR)
         self.assertEqual(job.route_kind, InputKind.HLS)
@@ -138,7 +148,7 @@ class DownloadJobTests(unittest.TestCase):
             for mode in (YouTubeMode.ORIGINAL_AUDIO, YouTubeMode.WAV):
                 for quality in (720, VideoQuality.BEST):
                     with self.subTest(kind=kind, mode=mode, quality=quality), self.assertRaises(ValueError):
-                        build_download_job(InspectionResult(kind, urls), mode=mode, video_quality=quality)
+                        build_download_job(InspectionResult(kind, urls), destination="/tmp/aidm-model-fixture", mode=mode, video_quality=quality)
 
     def test_non_youtube_jobs_reject_quality(self):
         for kind in (InputKind.DIRECT_SINGLE, InputKind.DIRECT_BULK, InputKind.HLS,
@@ -146,7 +156,7 @@ class DownloadJobTests(unittest.TestCase):
             bulk = kind == InputKind.DIRECT_BULK
             for quality in (1080, VideoQuality.BEST):
                 with self.subTest(kind=kind, quality=quality), self.assertRaises(ValueError):
-                    build_download_job(InspectionResult(kind, ["a", "b"] if bulk else ["a"]),
+                    build_download_job(InspectionResult(kind, ["a", "b"] if bulk else ["a"]), destination="/tmp/aidm-model-fixture",
                                        bulk_mode=BulkMode.PARALLEL if bulk else None, video_quality=quality)
 
     def test_video_requires_valid_explicit_quality(self):
@@ -155,10 +165,10 @@ class DownloadJobTests(unittest.TestCase):
             mode = None if kind == InputKind.YOUTUBE_PLAYLIST else YouTubeMode.VIDEO
             for quality in (None, 0, -1, True, False, 1080.0, "1080"):
                 with self.subTest(kind=kind, quality=quality), self.assertRaises(ValueError):
-                    build_download_job(result, mode=mode, video_quality=quality)
+                    build_download_job(result, destination="/tmp/aidm-model-fixture", mode=mode, video_quality=quality)
             for quality in (360, 480, 720, 1080, 1440, 2160, VideoQuality.BEST):
                 with self.subTest(kind=kind, quality=quality):
-                    self.assertEqual(build_download_job(result, mode=mode, video_quality=quality).video_quality, quality)
+                    self.assertEqual(build_download_job(result, destination="/tmp/aidm-model-fixture", mode=mode, video_quality=quality).video_quality, quality)
 
     def test_inspector_youtube_quality_uses_underlying_route(self):
         for route in (InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_PLAYLIST):
@@ -167,15 +177,15 @@ class DownloadJobTests(unittest.TestCase):
             result = InspectionResult(InputKind.STREAM_INSPECTOR, [stream.url], stream=stream, route_kind=route)
             mode = YouTubeMode.VIDEO if route == InputKind.YOUTUBE_SINGLE else None
             with self.assertRaises(ValueError):
-                build_download_job(result, mode=mode)
-            job = build_download_job(result, mode=mode, video_quality=1080)
+                build_download_job(result, destination="/tmp/aidm-model-fixture", mode=mode)
+            job = build_download_job(result, destination="/tmp/aidm-model-fixture", mode=mode, video_quality=1080)
             self.assertEqual(job.urls, (stream.url,))
             self.assertEqual(job.title, "Canonical")
             self.assertEqual(job.subtitles, ("sub", "sub"))
             self.assertEqual(job.headers, stream.headers)
             self.assertEqual(job.video_quality, 1080)
             with self.assertRaises(ValueError):
-                build_download_job(result, mode=YouTubeMode.WAV, video_quality=1080)
+                build_download_job(result, destination="/tmp/aidm-model-fixture", mode=YouTubeMode.WAV, video_quality=1080)
 
     def test_playlist_rejects_audio_mode(self):
         result = InspectionResult(
@@ -184,7 +194,7 @@ class DownloadJobTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             build_download_job(
-                result,
+                result, destination="/tmp/aidm-model-fixture",
                 mode=YouTubeMode.WAV,
                 video_quality=720,
             )
@@ -195,12 +205,12 @@ class DownloadJobTests(unittest.TestCase):
             urls=["https://example.com/file.iso"],
         )
         with self.assertRaises(ValueError):
-            build_download_job(result, bulk_mode=BulkMode.PARALLEL)
+            build_download_job(result, destination="/tmp/aidm-model-fixture", bulk_mode=BulkMode.PARALLEL)
 
     def test_direct_bulk_requires_multiple_urls(self):
         with self.assertRaises(ValueError):
             DownloadJob(
-                kind=InputKind.DIRECT_BULK,
+                kind=InputKind.DIRECT_BULK, destination="/tmp/aidm-model-fixture",
                 urls=("https://example.com/file.iso",),
                 bulk_mode=BulkMode.SEQUENTIAL,
             )
@@ -208,7 +218,7 @@ class DownloadJobTests(unittest.TestCase):
     def test_stream_inspector_requires_single_url(self):
         with self.assertRaises(ValueError):
             DownloadJob(
-                kind=InputKind.STREAM_INSPECTOR,
+                kind=InputKind.STREAM_INSPECTOR, destination="/tmp/aidm-model-fixture",
                 urls=("https://example.com/a", "https://example.com/b"),
                 route_kind=InputKind.HLS,
             )
@@ -216,7 +226,7 @@ class DownloadJobTests(unittest.TestCase):
     def test_generic_ytdlp_rejects_youtube_mode(self):
         with self.assertRaises(ValueError):
             DownloadJob(
-                kind=InputKind.GENERIC_YTDLP,
+                kind=InputKind.GENERIC_YTDLP, destination="/tmp/aidm-model-fixture",
                 urls=("https://example.com/watch/123",),
                 mode=YouTubeMode.VIDEO,
             )
