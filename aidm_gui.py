@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from download_job import DownloadJob, YouTubeMode, BulkMode, PlaylistQuality, build_download_job
 from gui_input import validate_gui_input
 from gui_metadata import MetadataProcess
 from inspection import classify_input, InputKind, MetadataStatus
@@ -195,6 +196,22 @@ class AiDMWindow(QMainWindow):
                 self._metadata_timer.start()
         if self._pending is not None and not self._inspection_timer.isActive():
             self.start_inspection()
+
+    def build_job_for_testing(
+        self, *, mode: YouTubeMode | None = None,
+        playlist_quality: int | PlaylistQuality | None = None,
+        bulk_mode: BulkMode | None = None,
+    ) -> DownloadJob:
+        """Temporary development helper: return a job without state changes/execution."""
+        if (self._closing or self.inspection_result is None
+                or self.input_result.error is not None or self.inspection_error):
+            raise ValueError("Current input has no successful classification")
+        if self.inspection_result.kind == InputKind.TORRENT:
+            raise ValueError("Torrent GUI support is deferred")
+        return build_download_job(
+            self.inspection_result, mode=mode,
+            playlist_quality=playlist_quality, bulk_mode=bulk_mode,
+        )
 
     def start_metadata(self) -> None:
         result = self.inspection_result

@@ -2,7 +2,6 @@
 
 from dataclasses import replace
 import json
-from urllib.parse import unquote, urlsplit
 
 from inspection import InputKind, InspectionResult, MetadataStatus
 
@@ -16,14 +15,9 @@ def prepare_metadata(result: InspectionResult) -> InspectionResult:
     if result.route in {InputKind.YOUTUBE_BULK, InputKind.DIRECT_BULK}:
         return replace(result, item_count=len(result.urls), metadata_status=MetadataStatus.AVAILABLE)
     if result.route == InputKind.DIRECT_SINGLE:
-        try:
-            filename = unquote(urlsplit(result.urls[0]).path.rsplit("/", 1)[-1], errors="strict")
-        except (ValueError, UnicodeError):
-            filename = ""
-        if (filename.strip() and filename not in {".", ".."}
-                and not any(ord(char) < 32 or ord(char) == 127 or char in "/\\" for char in filename)):
-            return replace(result, title=filename, metadata_status=MetadataStatus.AVAILABLE)
-        return result
+        # Intentionally untitled before execution; aria2c will resolve the name.
+        # Inspector-supplied titles remain authoritative via the rule above.
+        return replace(result, title=None, metadata_status=MetadataStatus.NOT_REQUESTED)
     if result.route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_PLAYLIST, InputKind.GENERIC_YTDLP}:
         return replace(result, metadata_status=MetadataStatus.PENDING)
     # Naked HLS/DASH and unsupported workflows need no invented title.

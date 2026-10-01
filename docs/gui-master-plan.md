@@ -1075,6 +1075,35 @@ This keeps the job model aligned with real backend capability.
 
 ---
 
+## Milestone 7 implementation boundary
+
+`download_job.py` provides a Qt-independent, frozen `DownloadJob` and
+`build_download_job(result, *, mode=None, playlist_quality=None, bulk_mode=None)`.
+It reuses `InputKind`, copies URLs/subtitles into tuples and headers into a
+read-only mapping, and rejects incompatible or missing choices with `ValueError`.
+There is no execution or destination field yet; destination selection remains
+Milestone 9 work.
+
+`YouTubeMode` supplies VIDEO, ORIGINAL_AUDIO and WAV for single/bulk video jobs.
+ORIGINAL_AUDIO describes the CLI's existing `audio` mode. Playlist quality is a
+positive maximum height, or explicit `PlaylistQuality.BEST` for the existing
+best-available fallback. No quality availability lookup occurs in this builder.
+`BulkMode` supplies SEQUENTIAL and PARALLEL for direct bulk. Choices have no
+implicit defaults.
+
+Inspector jobs retain their underlying `route_kind`, exact selected URL,
+User-Agent/Referer, supplied title and ordered subtitles including duplicates.
+Underlying YouTube routes still require their existing choices. Ordinary direct
+single jobs have no pre-download title (Milestone 6.1); bulk counts are derivable
+from URLs. Torrent is representable in the core model but remains deferred in GUI.
+Metadata failure does not prevent creating an otherwise valid job.
+
+The temporary `AiDMWindow.build_job_for_testing(...)` helper returns a snapshot
+of the current classification without changing UI state or starting execution.
+The F1–F7 previews remain available. Inline choices belong to Milestone 8.
+
+---
+
 # 31. InspectionResult concept
 
 The GUI needs a non-destructive way to ask the backend:
