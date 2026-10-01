@@ -331,10 +331,12 @@ Examples:
 - YouTube title;
 - playlist title;
 - playlist item count where practical;
-- direct filename;
-- direct Content-Length where available;
 - HLS/DASH type;
 - browser-provided media title.
+
+For a single direct download, AiDM intentionally does **not** derive or fetch a
+pre-download filename/title. The filename/name slot remains empty until the
+actual download begins and aria2c reveals the resolved output filename.
 
 The interface may temporarily show:
 
@@ -370,12 +372,14 @@ Example:
   Billionera – Otilia
 ```
 
-or:
+or, before a direct download starts:
 
 ```text
 ● Direct download
-  linuxmint.iso
 ```
+
+Once aria2c starts the job, the resolved filename may appear in the same
+title/name slot as runtime backend truth.
 
 or:
 
@@ -1126,9 +1130,12 @@ InspectionResult
 ├─ available_modes
 ├─ available_playlist_qualities
 ├─ known_size
-├─ destination_filename
 └─ additional metadata
 ```
+
+A direct-single resolved filename is intentionally not part of pre-download
+inspection. It belongs to runtime execution/telemetry once aria2c has resolved
+the real output filename.
 
 This is an architectural concept, not yet a locked implementation API.
 
