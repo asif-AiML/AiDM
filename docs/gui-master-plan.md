@@ -221,11 +221,13 @@ EMPTY
   ↓
 INSPECTING
   ↓
-NEEDS OPTIONS   ← only when required
+READY          ← passive inspection complete; Download/Enter accepts intent
   ↓
-READY
+NEEDS OPTIONS  ← only after Download/Enter, and only when choices are required
   ↓
-DOWNLOADING
+READY          ← configured DownloadJob; next Download/Enter is execution intent
+  ↓
+DOWNLOADING    ← future execution milestone
   ↓
 COMPLETE
 ```
@@ -253,8 +255,11 @@ A YouTube video may go:
 ```text
 EMPTY
 → INSPECTING
+→ READY (passive)
+→ Download/Enter
 → NEEDS OPTIONS
-→ READY
+→ READY (configured)
+→ Download/Enter
 → DOWNLOADING
 → COMPLETE
 ```
@@ -439,13 +444,20 @@ The Download button should appear only after AiDM has meaningful input.
 
 At rest, there should be no unnecessary Download button.
 
-Once the job is valid enough to start:
+Once passive classification identifies usable input, enter READY and show:
 
 ```text
 [ Download ]
 ```
 
 The Enter key should trigger Download when the job is in a READY state.
+
+READY means the primary action is available, not necessarily that secondary
+choices have been completed. First Download/Enter opens required configuration.
+When choices form a valid DownloadJob, return to READY. A further Download/Enter
+is execution intent. Simple routes skip configuration. In Milestone 8, execution
+is still deferred: the action retains the validated job and shows
+"Download configured — execution is not implemented yet." No downloader runs.
 
 If metadata is still loading but the job is otherwise valid, pressing Enter should not be unnecessarily blocked.
 
@@ -457,7 +469,22 @@ Several existing CLI workflows require additional user choices.
 
 The GUI should preserve those choices without popup-heavy interaction.
 
-Routine choices should appear inline in the main window.
+Routine choices appear inline only after explicit Download/Enter intent.
+Passive paste/classification never reveals modes or starts quality discovery.
+Order: input, classification, title, item count, secondary options, status,
+Download (when READY). No mode or quality is implicitly preselected.
+
+Video quality discovery uses the existing backend helper in a cancellable Qt
+process with a 20-second timeout. It starts only on choosing Video, or on the
+first Download/Enter for a playlist. During lookup show exactly:
+"Fetching available video qualities…". Then show Quality [ Choose quality ▼ ].
+Failure uses explicit VideoQuality.BEST and the calm status:
+"Available qualities could not be determined — best available will be used."
+
+Input changes clear all choices, qualities and jobs. Switching Video to audio,
+resetting configuration or closing cancels discovery and invalidates its
+generation; stale results cannot update the current input. Metadata/title
+completion preserves the active configuration phase. F1–F7 remain test previews.
 
 The principle is:
 
@@ -512,11 +539,12 @@ Milestone 7.2 adds backend/CLI video-quality selection after choosing Video,
 reusing playlist discovery and the maximum-height format selector. Discovery
 failure retains the existing best-available fallback. Audio/WAV are unchanged.
 The backend has passed real CLI testing. Milestone 7.3 represents this choice
-as `DownloadJob.video_quality`; visible GUI controls remain Milestone 8 work.
+as `DownloadJob.video_quality`; Milestone 8 exposes it after explicit intent.
 
-Milestone 8 target: show Download as [ Video ] [ Original Audio ] [ WAV ].
-Only when Video is selected, show Quality [ 1080p ▼ ]. Hide the quality control
-for Original Audio and WAV. These controls are not implemented yet.
+Milestone 8: first Download/Enter reveals Download as
+[ Video ] [ Original Audio ] [ WAV ]. Choosing Video starts quality discovery;
+only after it completes show Quality [ Choose quality ▼ ]. Hide the quality
+control for Original Audio and WAV; these modes require no quality lookup.
 
 ---
 
@@ -547,10 +575,10 @@ Save to
 
 Milestone 7.2 adds backend/CLI Video quality selection using only the first
 normalized video URL as the representative source. One selected maximum height
-applies to all videos, allowing lower available heights. GUI exposure is pending.
+applies to all videos, allowing lower available heights.
 
-Milestone 8 target: the same mode-first controls as single video, with Quality
-visible only for Video. One maximum-height choice applies to the entire batch.
+Milestone 8 uses the same intent-first controls as single video, with Quality
+visible only for Video after lookup. One maximum-height choice applies to the batch.
 
 ---
 
@@ -560,8 +588,8 @@ Current playlist behavior includes a quality selector.
 
 Playlist audio modes are not part of the current backend and are not required for the first GUI.
 
-Milestone 8 target: show the quality selector only, without a Video / Original
-Audio / WAV mode selector. The visible control is not implemented yet.
+Milestone 8: first Download/Enter starts quality discovery and then shows only
+the quality selector, without a Video / Original Audio / WAV mode selector.
 
 Example:
 
@@ -1033,7 +1061,7 @@ destination:
 
 `video_quality` is required for Video: a positive maximum height or explicit
 `VideoQuality.BEST`. It must be absent for Original Audio and WAV. The model
-supports this now; Milestone 8 will expose the conditional quality control.
+validates this choice; Milestone 8 reveals the control only after explicit intent.
 
 ## YouTube bulk
 
@@ -1052,7 +1080,7 @@ destination:
 ```
 
 The same `video_quality` rule applies as for single video. Bulk discovers
-qualities from the first normalized URL only. GUI controls await Milestone 8.
+qualities from the first normalized URL only, after Download/Enter and Video selection.
 
 ## YouTube playlist
 
@@ -1121,7 +1149,8 @@ Metadata failure does not prevent creating an otherwise valid job.
 
 The temporary `AiDMWindow.build_job_for_testing(...)` helper returns a snapshot
 of the current classification without changing UI state or starting execution.
-The F1–F7 previews remain available. Inline choices belong to Milestone 8.
+The F1–F7 previews remain available. Milestone 8 builds `download_job` from the
+inline selections using the same builder, with no second GUI job model.
 
 ---
 
@@ -1178,7 +1207,7 @@ GUI designer wants a control
 ```
 
 Single/bulk video quality followed this sequence in Milestones 7.2–7.3;
-GUI exposure remains the Milestone 8 target:
+GUI exposure follows the same sequence in Milestone 8:
 
 ```text
 implement backend

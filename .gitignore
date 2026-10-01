@@ -9,3 +9,4 @@ __pycache__/
 # Persistent shared model/API regressions (Milestone 7.3)
 !/tests/test_download_job.py
 !/tests/test_gui_download_job.py
+!/tests/test_gui_options.py

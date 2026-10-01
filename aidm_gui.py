@@ -10,11 +10,15 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
+    QComboBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
     QProgressBar,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
@@ -22,6 +26,7 @@ from PySide6.QtWidgets import (
 from download_job import DownloadJob, YouTubeMode, BulkMode, VideoQuality, build_download_job
 from gui_input import validate_gui_input
 from gui_metadata import MetadataProcess
+from gui_quality import QualityProcess
 from inspection import classify_input, InputKind, MetadataStatus
 from metadata import prepare_metadata
 
@@ -111,7 +116,26 @@ class AiDMWindow(QMainWindow):
         self.media_title.setTextFormat(Qt.TextFormat.PlainText)
         self.media_title.setWordWrap(True)
         self.item_count = QLabel()
+        self.mode_options, self.mode_group, self.mode_buttons = self.make_options(
+            "Download as", {
+                YouTubeMode.VIDEO: "Video", YouTubeMode.ORIGINAL_AUDIO: "Original Audio",
+                YouTubeMode.WAV: "WAV",
+            }, self.on_mode_changed,
+        )
+        self.bulk_options, self.bulk_group, self.bulk_buttons = self.make_options(
+            "Download mode", {BulkMode.SEQUENTIAL: "Sequential", BulkMode.PARALLEL: "Parallel"},
+            self.on_bulk_changed,
+        )
+        self.quality_options = QWidget()
+        quality_layout = QVBoxLayout(self.quality_options)
+        quality_layout.setContentsMargins(0, 0, 0, 0)
+        quality_layout.addWidget(QLabel("Quality"))
+        self.quality_choice = QComboBox()
+        self.quality_choice.setAccessibleName("Maximum video quality")
+        quality_layout.addWidget(self.quality_choice)
+        self.quality_choice.currentIndexChanged.connect(self.on_quality_changed)
         self.download_button = QPushButton("Download")
+        self.download_button.clicked.connect(self.on_download_intent)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
@@ -126,9 +150,12 @@ class AiDMWindow(QMainWindow):
             self.classification,
             self.media_title,
             self.item_count,
+            self.mode_options,
+            self.bulk_options,
+            self.quality_options,
+            self.active_status,
             self.download_button,
             self.progress,
-            self.active_status,
             self.abort_button,
             self.result_message,
         ):
@@ -143,6 +170,13 @@ class AiDMWindow(QMainWindow):
         self._worker = None
         self._pending = None
         self._closing = False
+        self.download_job = None
+        self._configuration_started = False
+        self._configuration_error = ""
+        self._execution_deferred = False
+        self._quality_generation = 0
+        self._quality_worker = None
+        self._quality_pending = False
         self._metadata = None
         self._metadata_timer = QTimer(self)
         self._metadata_timer.setSingleShot(True)
@@ -153,10 +187,164 @@ class AiDMWindow(QMainWindow):
         self._inspection_timer.setInterval(350)
         self._inspection_timer.timeout.connect(self.start_inspection)
         self.input_field.textChanged.connect(self.on_input_changed)
+        self._enter_shortcuts = []
+        for key in ("Return", "Enter"):
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.activated.connect(self.on_download_intent)
+            self._enter_shortcuts.append(shortcut)
         self.set_state(GuiState.EMPTY)
+
+    def make_options(self, label, choices, callback):
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(QLabel(label))
+        row = QHBoxLayout()
+        group = QButtonGroup(container)
+        buttons = {}
+        for value, text in choices.items():
+            button = QRadioButton(text)
+            group.addButton(button)
+            row.addWidget(button)
+            buttons[value] = button
+            button.toggled.connect(lambda checked, callback=callback: callback() if checked else None)
+        layout.addLayout(row)
+        return container, group, buttons
+
+    def usable_input(self):
+        result = self.inspection_result
+        return bool(not self._closing and result and not self.inspection_error
+                    and self.input_result.error is None and result.error is None
+                    and result.route in {
+                        InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK, InputKind.YOUTUBE_PLAYLIST,
+                        InputKind.DIRECT_SINGLE, InputKind.DIRECT_BULK, InputKind.HLS,
+                        InputKind.DASH, InputKind.GENERIC_YTDLP,
+                    })
+
+    def requires_options(self):
+        return self.inspection_result.route in {
+            InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK,
+            InputKind.YOUTUBE_PLAYLIST, InputKind.DIRECT_BULK,
+        }
+
+    def cancel_quality(self):
+        self._quality_generation += 1
+        self._quality_pending = False
+        if self._quality_worker is not None:
+            self._quality_worker.cancel()
+            self._quality_worker = None
+
+    def clear_quality(self):
+        self.quality_choice.blockSignals(True)
+        self.quality_choice.clear()
+        self.quality_choice.blockSignals(False)
+
+    def reset_configuration(self):
+        self.cancel_quality()
+        self.clear_quality()
+        for group in (self.mode_group, self.bulk_group):
+            group.setExclusive(False)
+            for button in group.buttons():
+                button.setChecked(False)
+            group.setExclusive(True)
+        self.download_job = None
+        self._configuration_started = False
+        self._configuration_error = ""
+        self._execution_deferred = False
+
+    def on_download_intent(self):
+        if self.current_state != GuiState.READY or not self.usable_input():
+            return
+        if not self._configuration_started and self.requires_options():
+            self._configuration_started = True
+            self.set_state(GuiState.NEEDS_OPTIONS)
+            if self.inspection_result.route == InputKind.YOUTUBE_PLAYLIST:
+                self.start_quality()
+            return
+        self.update_configuration()
+        if self.download_job is not None:
+            # Execution boundary only: no downloader is connected in Milestone 8.
+            self._execution_deferred = True
+            self.set_state(GuiState.READY)
+
+    def on_mode_changed(self):
+        if not self._configuration_started or not self.usable_input():
+            return
+        self.cancel_quality()
+        self.clear_quality()
+        self._execution_deferred = False
+        if self.mode_buttons[YouTubeMode.VIDEO].isChecked():
+            self.start_quality()
+        else:
+            self.update_configuration()
+
+    def on_bulk_changed(self):
+        self._execution_deferred = False
+        self.update_configuration()
+
+    def on_quality_changed(self):
+        self._execution_deferred = False
+        self.update_configuration()
+
+    def start_quality(self):
+        self.cancel_quality()
+        self.download_job = None
+        self._quality_pending = True
+        self.set_state(GuiState.NEEDS_OPTIONS)
+        self._quality_worker = QualityProcess(
+            self._quality_generation, self.inspection_result.urls[0], self,
+        )
+        self._quality_worker.finished.connect(self.finish_quality)
+        self._quality_worker.start()
+
+    @Slot(int, object)
+    def finish_quality(self, generation, qualities):
+        if self._closing or generation != self._quality_generation or not self._configuration_started:
+            return
+        self._quality_worker = None
+        self._quality_pending = False
+        self.quality_choice.blockSignals(True)
+        self.quality_choice.clear()
+        if qualities:
+            self.quality_choice.addItem("Choose quality", None)
+            for height in qualities:
+                self.quality_choice.addItem(f"{height}p", height)
+        else:
+            self.quality_choice.addItem("Best available", VideoQuality.BEST)
+        self.quality_choice.blockSignals(False)
+        self.update_configuration()
+
+    def update_configuration(self):
+        self.download_job = None
+        self._configuration_error = ""
+        if not self.usable_input():
+            self.set_state(GuiState.NEEDS_OPTIONS)
+            return
+        if self.requires_options() and not self._configuration_started:
+            self.set_state(GuiState.READY)
+            return
+        mode = next((value for value, button in self.mode_buttons.items() if button.isChecked()), None)
+        bulk = next((value for value, button in self.bulk_buttons.items() if button.isChecked()), None)
+        quality = self.quality_choice.currentData()
+        route = self.inspection_result.route
+        missing = (
+            self._quality_pending
+            or (route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK} and mode is None)
+            or ((route == InputKind.YOUTUBE_PLAYLIST or mode == YouTubeMode.VIDEO) and quality is None)
+            or (route == InputKind.DIRECT_BULK and bulk is None)
+        )
+        if not missing:
+            try:
+                self.download_job = build_download_job(
+                    self.inspection_result, mode=mode, video_quality=quality, bulk_mode=bulk,
+                )
+            except ValueError as error:
+                self._configuration_error = str(error)
+        self.set_state(GuiState.READY if self.download_job is not None else GuiState.NEEDS_OPTIONS)
 
     def on_input_changed(self, text: str) -> None:
         self._revision += 1
+        self.reset_configuration()
         self.cancel_metadata()
         self._inspection_timer.stop()
         self._pending = None
@@ -190,8 +378,7 @@ class AiDMWindow(QMainWindow):
         if revision == self._revision:
             self.inspection_result = prepare_metadata(result) if result else None
             self.inspection_error = error
-            # Classified is not download-ready: options/jobs come later.
-            self.set_state(GuiState.NEEDS_OPTIONS)
+            self.update_configuration()
             if self.inspection_result and self.inspection_result.metadata_status == MetadataStatus.PENDING:
                 self._metadata_timer.start()
         if self._pending is not None and not self._inspection_timer.isActive():
@@ -227,7 +414,7 @@ class AiDMWindow(QMainWindow):
             return
         self._metadata = None
         self.inspection_result = result
-        self.set_state(GuiState.NEEDS_OPTIONS)
+        self.update_configuration()
 
     def cancel_metadata(self) -> None:
         self._metadata_timer.stop()
@@ -239,6 +426,7 @@ class AiDMWindow(QMainWindow):
 
     def preview_state(self, state: GuiState) -> None:
         self._revision += 1
+        self.reset_configuration()
         self.cancel_metadata()
         self._inspection_timer.stop()
         self._pending = None
@@ -247,6 +435,7 @@ class AiDMWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self._closing = True
         self._revision += 1
+        self.reset_configuration()
         self.cancel_metadata()
         # Reap even processes cancelled by a preceding edit before closing.
         for worker in self.findChildren(MetadataProcess):
@@ -285,8 +474,16 @@ class AiDMWindow(QMainWindow):
         )
         self.item_count.setText(f"{count} {count_unit}" if count is not None else "")
         self.item_count.setVisible(has_details and count is not None)
+        configuring = self._configuration_started and state in {GuiState.READY, GuiState.NEEDS_OPTIONS}
+        route = result.route if result else None
+        self.mode_options.setVisible(configuring and route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK})
+        self.bulk_options.setVisible(configuring and route == InputKind.DIRECT_BULK)
+        self.quality_options.setVisible(configuring and not self._quality_pending
+                                        and self.quality_choice.count() > 1)
         self.download_button.setVisible(state == GuiState.READY)
-        self.download_button.setEnabled(False)
+        self.download_button.setEnabled(state == GuiState.READY and self.usable_input())
+        for shortcut in self._enter_shortcuts:
+            shortcut.setEnabled(state == GuiState.READY and self.usable_input())
         self.progress.setVisible(downloading)
         self.progress.setEnabled(False)
         if downloading:
@@ -295,6 +492,14 @@ class AiDMWindow(QMainWindow):
             status = "Input incomplete or invalid — continue editing"
         elif self.inspection_error:
             status = "Could not inspect input — check the URL and edit to retry"
+        elif self._quality_pending:
+            status = "Fetching available video qualities…"
+        elif self._configuration_error:
+            status = self._configuration_error
+        elif self._execution_deferred:
+            status = "Download configured — execution is not implemented yet."
+        elif self.quality_choice.currentData() == VideoQuality.BEST:
+            status = "Available qualities could not be determined — best available will be used."
         elif result is not None:
             if result.error:
                 status = result.error
@@ -309,7 +514,7 @@ class AiDMWindow(QMainWindow):
         self.active_status.setText(status)
         self.active_status.setVisible(
             state == GuiState.INSPECTING or downloading
-            or (state == GuiState.NEEDS_OPTIONS and bool(status))
+            or (state in {GuiState.NEEDS_OPTIONS, GuiState.READY} and bool(status))
         )
         self.abort_button.setVisible(downloading)
         self.abort_button.setEnabled(False)

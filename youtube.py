@@ -10,7 +10,7 @@ YOUTUBE_VIDEO_FORMAT = (
 )
 
 
-def get_available_youtube_qualities(url: str) -> list[int]:
+def get_available_youtube_qualities(url: str, *, inspection_only: bool = False) -> list[int]:
     command = [
         "yt-dlp",
         "--dump-single-json",
@@ -19,6 +19,14 @@ def get_available_youtube_qualities(url: str) -> list[int]:
         "1",
         url,
     ]
+    if inspection_only:
+        # GUI inspection must not inherit file-writing or execution config.
+        # Default CLI discovery remains unchanged.
+        command[1:1] = [
+            "--ignore-config", "--no-plugin-dirs", "--no-cache-dir",
+            "--simulate", "--no-check-formats", "--socket-timeout", "10",
+            "--retries", "0", "--extractor-retries", "0",
+        ]
 
     try:
         result = subprocess.run(
