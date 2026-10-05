@@ -196,7 +196,7 @@ class DestinationTests(unittest.TestCase):
 
     def test_enter_with_destination_focus_does_not_open_picker(self):
         window = self.window()
-        self.inspect(window)
+        self.inspect(window, InputKind.HLS)
         window.activateWindow()
         window.destination_field.setFocus()
         self.app.processEvents()

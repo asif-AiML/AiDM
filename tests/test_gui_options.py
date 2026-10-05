@@ -161,7 +161,7 @@ class GuiOptionsTests(unittest.TestCase):
         self.assertEqual(self.workers, [])
 
     def test_simple_routes_have_no_options_or_execution(self):
-        for kind in (InputKind.DIRECT_SINGLE, InputKind.HLS, InputKind.DASH,
+        for kind in (InputKind.HLS, InputKind.DASH,
                      InputKind.GENERIC_YTDLP, InputKind.STREAM_INSPECTOR):
             self.paste(kind, f"https://example.test/{kind.name}")
             self.window.download_button.click()

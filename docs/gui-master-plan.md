@@ -227,7 +227,7 @@ NEEDS OPTIONS  ← only after Download/Enter, and only when choices are required
   ↓
 READY          ← configured DownloadJob; next Download/Enter is execution intent
   ↓
-DOWNLOADING    ← future execution milestone
+DOWNLOADING    ← Milestone 10: DIRECT_SINGLE only; other routes deferred
   ↓
 COMPLETE
 ```
@@ -455,9 +455,9 @@ The Enter key should trigger Download when the job is in a READY state.
 READY means the primary action is available, not necessarily that secondary
 choices have been completed. First Download/Enter opens required configuration.
 When choices form a valid DownloadJob, return to READY. A further Download/Enter
-is execution intent. Simple routes skip configuration. In Milestone 8, execution
-is still deferred: the action retains the validated job and shows
-"Download configured — execution is not implemented yet." No downloader runs.
+is execution intent. Simple routes skip configuration. Milestone 10 executes
+DIRECT_SINGLE only. Other routes retain the validated job and show
+"Download configured — execution is not implemented yet."
 
 If metadata is still loading but the job is otherwise valid, pressing Enter should not be unnecessarily blocked.
 
@@ -674,8 +674,34 @@ Milestone 9 behavior:
 
 Destination is general job context, not an intent-driven secondary choice.
 Enter retains the primary Download behavior and does not open Browse.
-Execution and backend output-directory handling are still deferred. Tests inject
-temporary INI settings and do not access the user's real preferences.
+Milestone 10 maps the direct-single job destination to aria2c `--dir`, after
+revalidating the directory immediately before execution. An unavailable folder
+is reported without silently redirecting the download. Tests inject temporary
+INI settings and do not access the user's real preferences.
+
+## Milestone 10 execution boundary
+
+- Only `DownloadJob.kind == DIRECT_SINGLE` executes from the GUI. All other
+  kinds, including Stream Inspector jobs with an underlying direct route, remain
+  deferred.
+- `downloader.build_direct_command(url, destination=None)` owns the existing
+  aria2c arguments. The CLI wrapper still uses blocking `run_command`; omitting
+  destination preserves its historical current-directory output behavior.
+- `gui_execution.DirectDownloadProcess` launches that same command through
+  asynchronous QProcess, with the job's absolute destination passed as `--dir`.
+  It never changes the application working directory.
+- READY transitions directly to DOWNLOADING, initially showing `Starting aria2c…`.
+  The actual process-start signal changes the status to `Downloading…`.
+  Input editing and Browse are disabled; configuration controls are hidden.
+- A normal process exit with code zero shows `Download complete`; nonzero or
+  crashed exits show `Download failed`. Failure to launch shows
+  `Could not start aria2c.`. File existence alone does not imply success.
+- Output is drained without progress parsing; only a bounded stderr tail is
+  retained internally. No filename guessing, progress bar, telemetry or user-facing
+  Abort is added. Explicit Abort remains deferred to Milestone 14.
+- Closing terminates the child, waits up to one second, then kills and waits up
+  to one more second if necessary. If the child has still not stopped, the window
+  remains open to retain ownership. This is close-time hygiene only.
 
 ---
 
@@ -1143,7 +1169,7 @@ Milestone 9 adds required `destination: str`, normalized lexically as an absolut
 path. Empty, relative or NUL-containing values are rejected. The Qt-independent
 model does not probe directory existence or permissions; the GUI handles those
 checks. The test helper automatically supplies the GUI's selected destination.
-There is no execution yet.
+Milestone 10 consumes this snapshot for DIRECT_SINGLE execution only.
 
 `YouTubeMode` supplies VIDEO, ORIGINAL_AUDIO and WAV for single/bulk video jobs.
 ORIGINAL_AUDIO describes the CLI's existing `audio` mode. `video_quality` is a

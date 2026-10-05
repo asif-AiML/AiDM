@@ -11,3 +11,6 @@ __pycache__/
 !/tests/test_gui_download_job.py
 !/tests/test_gui_options.py
 !/tests/test_gui_destination.py
+# Persistent direct execution regressions (Milestone 10)
+!/tests/test_direct_execution.py
+!/tests/test_gui_execution.py

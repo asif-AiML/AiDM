@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from download_job import DownloadJob, YouTubeMode, BulkMode, VideoQuality, build_download_job
 from gui_input import validate_gui_input
+from gui_execution import DirectDownloadProcess
 from gui_metadata import MetadataProcess
 from gui_quality import QualityProcess
 from inspection import classify_input, InputKind, MetadataStatus
@@ -220,6 +221,9 @@ class AiDMWindow(QMainWindow):
         self._configuration_started = False
         self._configuration_error = ""
         self._execution_deferred = False
+        self._download_process = None
+        self._download_status = ""
+        self._download_message = ""
         self._quality_generation = 0
         self._quality_worker = None
         self._quality_pending = False
@@ -241,6 +245,8 @@ class AiDMWindow(QMainWindow):
         self.set_state(GuiState.EMPTY)
 
     def browse_destination(self):
+        if self.download_active():
+            return
         selected = QFileDialog.getExistingDirectory(
             self, "Choose download folder", self.destination,
         )
@@ -335,9 +341,45 @@ class AiDMWindow(QMainWindow):
             return
         self.update_configuration()
         if self.download_job is not None:
-            # Execution boundary only: no downloader is connected in Milestone 8.
-            self._execution_deferred = True
+            if self.download_job.kind == InputKind.DIRECT_SINGLE:
+                self.start_direct_download()
+            else:
+                self._execution_deferred = True
+                self.set_state(GuiState.READY)
+
+    def download_active(self):
+        return self._download_process is not None and self._download_process.active
+
+    def start_direct_download(self):
+        job = self.download_job
+        if self.download_active() or job is None or job.kind != InputKind.DIRECT_SINGLE:
+            return
+        # Revalidate the exact immutable snapshot; never redirect a real job.
+        if existing_destination(job.destination) is None:
+            self._configuration_error = "Download folder is unavailable — choose another folder."
             self.set_state(GuiState.READY)
+            return
+        if self._download_process is not None:
+            self._download_process.deleteLater()
+        self._download_process = DirectDownloadProcess(job, self)
+        self._download_process.started.connect(self.on_download_started)
+        self._download_process.finished.connect(self.on_download_finished)
+        self._download_status = "Starting aria2c…"
+        self._download_message = ""
+        self.set_state(GuiState.DOWNLOADING)
+        self._download_process.start()
+
+    @Slot()
+    def on_download_started(self):
+        if not self._closing:
+            self._download_status = "Downloading…"
+            self.set_state(GuiState.DOWNLOADING)
+
+    @Slot(bool, str)
+    def on_download_finished(self, success, message):
+        if not self._closing:
+            self._download_message = message
+            self.set_state(GuiState.COMPLETE if success else GuiState.FAILED)
 
     def on_mode_changed(self):
         if not self._configuration_started or not self.usable_input():
@@ -387,6 +429,8 @@ class AiDMWindow(QMainWindow):
         self.update_configuration()
 
     def update_configuration(self):
+        if self.download_active():
+            return
         self.download_job = None
         self._configuration_error = ""
         if not self.usable_input():
@@ -413,9 +457,17 @@ class AiDMWindow(QMainWindow):
                 )
             except ValueError as error:
                 self._configuration_error = str(error)
-        self.set_state(GuiState.READY if self.download_job is not None else GuiState.NEEDS_OPTIONS)
+        # A missing folder is recoverable with Browse, not a job-mode choice.
+        ready = self.download_job is not None or (
+            not missing and self.inspection_result.kind == InputKind.DIRECT_SINGLE
+        )
+        self.set_state(GuiState.READY if ready else GuiState.NEEDS_OPTIONS)
 
     def on_input_changed(self, text: str) -> None:
+        if self.download_active():
+            return
+        self._download_message = ""
+        self._download_status = ""
         self._revision += 1
         self.reset_configuration()
         self.cancel_metadata()
@@ -498,6 +550,10 @@ class AiDMWindow(QMainWindow):
             self.inspection_result = replace(self.inspection_result, metadata_status=MetadataStatus.NOT_REQUESTED)
 
     def preview_state(self, state: GuiState) -> None:
+        if self.download_active():
+            return
+        self._download_message = ""
+        self._download_status = ""
         self._revision += 1
         self.reset_configuration()
         self.cancel_metadata()
@@ -507,6 +563,10 @@ class AiDMWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._closing = True
+        if self._download_process is not None and not self._download_process.shutdown():
+            self._closing = False
+            event.ignore()
+            return
         self._revision += 1
         self.reset_configuration()
         self.cancel_metadata()
@@ -531,7 +591,8 @@ class AiDMWindow(QMainWindow):
 
         self.heading.setVisible(True)
         self.input_field.setVisible(True)
-        self.input_field.setEnabled(True)
+        self.input_field.setEnabled(not downloading)
+        self.browse_button.setEnabled(not downloading)
         result = self.inspection_result
         self.classification.setText(
             "● " + CLASSIFICATION_LABELS[result.kind] if result else ""
@@ -560,10 +621,10 @@ class AiDMWindow(QMainWindow):
         self.download_button.setEnabled(state == GuiState.READY and self.usable_input())
         for shortcut in self._enter_shortcuts:
             shortcut.setEnabled(state == GuiState.READY and self.usable_input())
-        self.progress.setVisible(downloading)
+        self.progress.setVisible(False)
         self.progress.setEnabled(False)
         if downloading:
-            status = "Download status placeholder (no download running)"
+            status = self._download_status or "Download status placeholder (no download running)"
         elif self.input_result.error is not None:
             status = "Input incomplete or invalid — continue editing"
         elif self.inspection_error:
@@ -592,9 +653,9 @@ class AiDMWindow(QMainWindow):
             state == GuiState.INSPECTING or downloading
             or (state in {GuiState.NEEDS_OPTIONS, GuiState.READY} and bool(status))
         )
-        self.abort_button.setVisible(downloading)
+        self.abort_button.setVisible(False)
         self.abort_button.setEnabled(False)
-        self.result_message.setText({
+        self.result_message.setText(self._download_message or {
             GuiState.COMPLETE: "Download complete (state preview)",
             GuiState.FAILED: "Download failed (state preview)",
         }.get(state, ""))

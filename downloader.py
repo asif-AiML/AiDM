@@ -51,10 +51,8 @@ def download_torrent(torrent_path: str) -> int:
     return run_command(command)
 
 
-def download_direct(url: str) -> int:
-    print("Input type: direct HTTP file")
-    print("Download engine: aria2c")
-
+def build_direct_command(url: str, destination: str | None = None) -> list[str]:
+    """Shared direct-download flags; omitted destination preserves CLI cwd."""
     command = [
         "aria2c",
         "--continue=true",
@@ -63,10 +61,17 @@ def download_direct(url: str) -> int:
         "--min-split-size=1M",
         "--console-log-level=warn",
         "--summary-interval=1",
-        url,
     ]
+    if destination is not None:
+        command.append(f"--dir={destination}")
+    command.append(url)
+    return command
 
-    return run_command(command)
+
+def download_direct(url: str, destination: str | None = None) -> int:
+    print("Input type: direct HTTP file")
+    print("Download engine: aria2c")
+    return run_command(build_direct_command(url, destination))
 
 
 def download_direct_bulk(urls: list[str]) -> int:
