@@ -14,3 +14,5 @@ __pycache__/
 # Persistent direct execution regressions (Milestone 10)
 !/tests/test_direct_execution.py
 !/tests/test_gui_execution.py
+# Persistent status-event contract regressions (Milestone 11)
+!/tests/test_status_event.py

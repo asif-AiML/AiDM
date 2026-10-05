@@ -33,6 +33,21 @@ from gui_metadata import MetadataProcess
 from gui_quality import QualityProcess
 from inspection import classify_input, InputKind, MetadataStatus
 from metadata import prepare_metadata
+from status_event import StatusEvent, StatusKind, StatusReason
+
+
+def render_status(event: StatusEvent) -> str:
+    """Translate backend activity into GUI language, without changing state."""
+    engine = event.engine or "download engine"
+    if event.kind == StatusKind.STARTING_ENGINE:
+        return f"Starting {engine}…"
+    if event.kind == StatusKind.FAILED and event.reason == StatusReason.START_FAILED:
+        return f"Could not start {engine}."
+    return {
+        StatusKind.DOWNLOADING: "Downloading…",
+        StatusKind.COMPLETE: "Download complete",
+        StatusKind.FAILED: "Download failed",
+    }[event.kind]
 
 
 CLASSIFICATION_LABELS = {
@@ -222,8 +237,7 @@ class AiDMWindow(QMainWindow):
         self._configuration_error = ""
         self._execution_deferred = False
         self._download_process = None
-        self._download_status = ""
-        self._download_message = ""
+        self._download_event: StatusEvent | None = None
         self._quality_generation = 0
         self._quality_worker = None
         self._quality_pending = False
@@ -362,23 +376,21 @@ class AiDMWindow(QMainWindow):
         if self._download_process is not None:
             self._download_process.deleteLater()
         self._download_process = DirectDownloadProcess(job, self)
-        self._download_process.started.connect(self.on_download_started)
+        self._download_process.status_event.connect(self.on_download_status)
         self._download_process.finished.connect(self.on_download_finished)
-        self._download_status = "Starting aria2c…"
-        self._download_message = ""
+        self._download_event = None
         self.set_state(GuiState.DOWNLOADING)
         self._download_process.start()
 
-    @Slot()
-    def on_download_started(self):
+    @Slot(object)
+    def on_download_status(self, event: StatusEvent):
         if not self._closing:
-            self._download_status = "Downloading…"
-            self.set_state(GuiState.DOWNLOADING)
+            self._download_event = event
+            self.set_state(self.current_state)
 
-    @Slot(bool, str)
-    def on_download_finished(self, success, message):
+    @Slot(bool)
+    def on_download_finished(self, success):
         if not self._closing:
-            self._download_message = message
             self.set_state(GuiState.COMPLETE if success else GuiState.FAILED)
 
     def on_mode_changed(self):
@@ -466,8 +478,7 @@ class AiDMWindow(QMainWindow):
     def on_input_changed(self, text: str) -> None:
         if self.download_active():
             return
-        self._download_message = ""
-        self._download_status = ""
+        self._download_event = None
         self._revision += 1
         self.reset_configuration()
         self.cancel_metadata()
@@ -552,8 +563,7 @@ class AiDMWindow(QMainWindow):
     def preview_state(self, state: GuiState) -> None:
         if self.download_active():
             return
-        self._download_message = ""
-        self._download_status = ""
+        self._download_event = None
         self._revision += 1
         self.reset_configuration()
         self.cancel_metadata()
@@ -623,8 +633,9 @@ class AiDMWindow(QMainWindow):
             shortcut.setEnabled(state == GuiState.READY and self.usable_input())
         self.progress.setVisible(False)
         self.progress.setEnabled(False)
+        download_status = render_status(self._download_event) if self._download_event else ""
         if downloading:
-            status = self._download_status or "Download status placeholder (no download running)"
+            status = download_status or "Download status placeholder (no download running)"
         elif self.input_result.error is not None:
             status = "Input incomplete or invalid — continue editing"
         elif self.inspection_error:
@@ -655,7 +666,7 @@ class AiDMWindow(QMainWindow):
         )
         self.abort_button.setVisible(False)
         self.abort_button.setEnabled(False)
-        self.result_message.setText(self._download_message or {
+        self.result_message.setText(download_status or {
             GuiState.COMPLETE: "Download complete (state preview)",
             GuiState.FAILED: "Download failed (state preview)",
         }.get(state, ""))

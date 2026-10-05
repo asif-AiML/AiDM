@@ -15,12 +15,13 @@ try:
 except ImportError:
     raise unittest.SkipTest("GUI execution checks require PySide6")
 
-from aidm_gui import AiDMWindow, GuiState
+from aidm_gui import AiDMWindow, GuiState, render_status
 from download_job import BulkMode, DownloadJob, YouTubeMode
 from downloader import build_direct_command
 from gui_execution import DirectDownloadProcess
 from inspection import InputKind, InspectionResult
 from stream_parser import StreamInput
+from status_event import StatusEvent, StatusKind, StatusReason
 
 
 class FakeProcess(QObject):
@@ -132,6 +133,99 @@ class GuiExecutionTests(unittest.TestCase):
         while not predicate() and time.monotonic() < deadline:
             QTest.qWait(10)
         self.assertTrue(predicate())
+
+    def start_with_events(self):
+        self.inspect()
+        events = []
+        sequence = []
+
+        def create(job, parent):
+            worker = DirectDownloadProcess(job, parent)
+            worker.status_event.connect(events.append)
+            worker.status_event.connect(lambda event: sequence.append(event.kind))
+            worker.finished.connect(lambda success: sequence.append(("finished", success)))
+            return worker
+
+        with patch("aidm_gui.DirectDownloadProcess", side_effect=create):
+            self.window.on_download_intent()
+        return self.window._download_process.process, events, sequence
+
+    def test_successful_semantic_event_order_and_single_completion_presentation(self):
+        process, events, sequence = self.start_with_events()
+        self.assertEqual(events, [StatusEvent(StatusKind.STARTING_ENGINE, "aria2c")])
+        self.assertEqual(self.window.active_status.text(), "Starting aria2c…")
+        self.window.on_download_intent()  # No duplicate launch/status.
+        process.begin()
+        self.assertEqual(self.window.active_status.text(), "Downloading…")
+        self.assertTrue(self.window.result_message.isHidden())
+        process.finish()
+        self.assertEqual(sequence, [StatusKind.STARTING_ENGINE, StatusKind.DOWNLOADING,
+                                    StatusKind.COMPLETE, ("finished", True)])
+        self.assertTrue(all(isinstance(event, StatusEvent) and event.engine == "aria2c" for event in events))
+        self.assertEqual(self.window._download_event, events[-1])
+        self.assertEqual(self.window.result_message.text(), "Download complete")
+        self.assertFalse(self.window.result_message.isHidden())
+        self.assertTrue(self.window.active_status.isHidden())
+        process.finish()  # A repeated Qt terminal notification is ignored.
+        self.assertEqual(len(events), 3)
+
+    def test_failure_events_and_start_failure_reason(self):
+        for failed_start in (False, True):
+            self.window.input_field.clear()
+            process, events, sequence = self.start_with_events()
+            if failed_start:
+                process.current_state = QProcess.ProcessState.NotRunning
+                process.errorOccurred.emit(QProcess.ProcessError.FailedToStart)
+                expected = [StatusKind.STARTING_ENGINE, StatusKind.FAILED, ("finished", False)]
+                reason = StatusReason.START_FAILED
+                message = "Could not start aria2c."
+            else:
+                process.begin()
+                process.stderr = b"raw diagnostic not part of the event"
+                process.finish(7)
+                expected = [StatusKind.STARTING_ENGINE, StatusKind.DOWNLOADING,
+                            StatusKind.FAILED, ("finished", False)]
+                reason = None
+                message = "Download failed"
+                self.assertIn(b"raw diagnostic", self.window._download_process.stderr_tail)
+            self.assertEqual(sequence, expected)
+            self.assertEqual(events[-1], StatusEvent(StatusKind.FAILED, "aria2c", reason))
+            self.assertEqual(self.window.current_state, GuiState.FAILED)
+            self.assertEqual(self.window.result_message.text(), message)
+            self.assertTrue(self.window.active_status.isHidden())
+
+    def test_status_presentation_does_not_drive_gui_state(self):
+        with patch("aidm_gui.render_status", return_value="Different frontend wording"):
+            process = self.start()
+            self.assertEqual(self.window.active_status.text(), "Different frontend wording")
+            process.begin()
+            self.assertEqual(self.window.active_status.text(), "Different frontend wording")
+            worker = self.window._download_process
+            # Even terminal activity alone cannot change structural GuiState.
+            worker.status_event.emit(StatusEvent(StatusKind.COMPLETE, "aria2c"))
+            self.assertEqual(self.window.active_status.text(), "Different frontend wording")
+            self.assertEqual(self.window.current_state, GuiState.DOWNLOADING)
+            process.finish()
+            self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+            self.assertEqual(self.window.result_message.text(), "Different frontend wording")
+        self.window.input_field.clear()
+        self.assertIsNone(self.window._download_event)
+        self.assertEqual(self.window.current_state, GuiState.EMPTY)
+
+    def test_renderer_owns_execution_language(self):
+        self.assertEqual(render_status(StatusEvent(StatusKind.STARTING_ENGINE, "aria2c")), "Starting aria2c…")
+        self.assertEqual(render_status(StatusEvent(StatusKind.DOWNLOADING)), "Downloading…")
+        self.assertEqual(render_status(StatusEvent(StatusKind.COMPLETE)), "Download complete")
+        self.assertEqual(render_status(StatusEvent(StatusKind.FAILED)), "Download failed")
+        self.assertEqual(render_status(StatusEvent(StatusKind.FAILED, "aria2c", StatusReason.START_FAILED)),
+                         "Could not start aria2c.")
+
+    def test_close_does_not_publish_a_spurious_completion(self):
+        process, events, sequence = self.start_with_events()
+        process.begin()
+        self.window.close()
+        self.assertEqual(sequence, [StatusKind.STARTING_ENGINE, StatusKind.DOWNLOADING])
+        self.assertEqual(process.state(), QProcess.ProcessState.NotRunning)
 
     def test_passive_job_and_exact_shared_command_started_once(self):
         self.inspect()

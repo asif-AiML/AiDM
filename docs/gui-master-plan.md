@@ -703,6 +703,32 @@ INI settings and do not access the user's real preferences.
   to one more second if necessary. If the child has still not stopped, the window
   remains open to retain ownership. This is close-time hygiene only.
 
+## Milestone 11 status-event channel
+
+Execution activity follows `backend execution → StatusEvent → frontend renderer`.
+The frozen, Qt-independent model in `status_event.py` contains only `kind`,
+optional `engine`, and optional semantic `reason`. It carries neither UI sentences
+nor raw stderr. The current kinds are STARTING_ENGINE, DOWNLOADING, COMPLETE and
+FAILED; START_FAILED distinguishes failure to launch an engine.
+
+For DIRECT_SINGLE, `DirectDownloadProcess.status_event` emits STARTING_ENGINE
+for aria2c immediately before launch, DOWNLOADING on the actual QProcess started
+signal, then COMPLETE on a normal zero exit or FAILED on nonzero/crashed exit.
+Launch failure emits FAILED with START_FAILED, without a DOWNLOADING event.
+Terminal status precedes the separate `finished(success)` signal. Closing keeps
+the existing cleanup behavior and suppresses terminal UI notifications.
+
+The GUI renderer translates the latest event into text. `GuiState` remains the
+structural state authority: status events do not transition it, and terminal
+state transitions depend only on `finished(success)`, never rendered text.
+While active, only `active_status` shows activity; after completion/failure,
+only `result_message` shows the result. Bounded stderr stays separate.
+
+StatusEvent answers **what is happening**. Future ProgressEvent, beginning in
+Milestone 12, answers **how far it has progressed**. No progress fields, parsing,
+filename discovery or artificial finalization stage are introduced here.
+Inspection/configuration statuses and the CLI renderer remain unchanged.
+
 ---
 
 # 18. Torrent UI scope
@@ -805,7 +831,6 @@ ProgressEvent
 ├─ speed
 ├─ eta
 ├─ title
-├─ status
 └─ optional queue information
 ```
 

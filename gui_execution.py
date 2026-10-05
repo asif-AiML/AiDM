@@ -5,11 +5,12 @@ from PySide6.QtCore import QObject, QProcess, Signal
 from download_job import DownloadJob
 from downloader import build_direct_command
 from inspection import InputKind
+from status_event import StatusEvent, StatusKind, StatusReason
 
 
 class DirectDownloadProcess(QObject):
-    started = Signal()
-    finished = Signal(bool, str)
+    status_event = Signal(object)  # Payload: shared, Qt-independent StatusEvent.
+    finished = Signal(bool)
     MAX_STDERR_BYTES = 65536
 
     def __init__(self, job: DownloadJob, parent=None):
@@ -24,7 +25,7 @@ class DirectDownloadProcess(QObject):
         self.stderr_tail = b""
         self.process = QProcess(self)
         self.process.setStandardInputFile(QProcess.nullDevice())
-        self.process.started.connect(self.started.emit)
+        self.process.started.connect(self.on_started)
         self.process.readyReadStandardOutput.connect(self.drain_output)
         self.process.readyReadStandardError.connect(self.drain_output)
         self.process.errorOccurred.connect(self.on_error)
@@ -35,7 +36,12 @@ class DirectDownloadProcess(QObject):
             return
         command = build_direct_command(self.job.urls[0], self.job.destination)
         self.active = True
+        self.status_event.emit(StatusEvent(StatusKind.STARTING_ENGINE, engine="aria2c"))
         self.process.start(command[0], command[1:])
+
+    def on_started(self):
+        if not self.done and not self.closing:
+            self.status_event.emit(StatusEvent(StatusKind.DOWNLOADING, engine="aria2c"))
 
     def drain_output(self):
         self.process.readAllStandardOutput()
@@ -44,20 +50,24 @@ class DirectDownloadProcess(QObject):
 
     def on_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
-            self.complete(False, "Could not start aria2c.")
+            self.complete(False, StatusReason.START_FAILED)
 
     def on_finished(self, code, status):
         self.drain_output()
         success = code == 0 and status == QProcess.ExitStatus.NormalExit
-        self.complete(success, "Download complete" if success else "Download failed")
+        self.complete(success)
 
-    def complete(self, success, message):
+    def complete(self, success, reason: StatusReason | None = None):
         if self.done:
             return
         self.done = True
         self.active = False
         if not self.closing:
-            self.finished.emit(success, message)
+            self.status_event.emit(StatusEvent(
+                StatusKind.COMPLETE if success else StatusKind.FAILED,
+                engine="aria2c", reason=reason,
+            ))
+            self.finished.emit(success)
 
     def shutdown(self) -> bool:
         """Close-time hygiene only; bounded waits never run during a transfer."""
