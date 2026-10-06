@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Thread
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -42,15 +43,15 @@ def render_status(event: StatusEvent) -> str:
     """Translate backend activity into GUI language, without changing state."""
     engine = event.engine or "download engine"
     if event.kind == StatusKind.STARTING_ENGINE:
-        return f"Starting {engine}…"
+        return f"Starting {engine}… ⚙️"
     if event.kind == StatusKind.FAILED and event.reason == StatusReason.START_FAILED:
-        return f"Could not start {engine}."
+        return f"Could not start {engine}. ⚠️"
     return {
-        StatusKind.DOWNLOADING: "Downloading…",
-        StatusKind.COMPLETE: "Download complete",
-        StatusKind.FAILED: "Download failed",
-        StatusKind.ABORTING: "Aborting…",
-        StatusKind.ABORTED: "Download aborted",
+        StatusKind.DOWNLOADING: "Downloading… ⬇️",
+        StatusKind.COMPLETE: "Download complete 🎉💫",
+        StatusKind.FAILED: "Download failed 🚫🤕",
+        StatusKind.ABORTING: "Aborting… 🛑",
+        StatusKind.ABORTED: "Download aborted 🙄",
     }[event.kind]
 
 
@@ -123,6 +124,28 @@ def initial_destination(settings: QSettings) -> str:
     return existing_destination(str(home / "Downloads")) or str(home.resolve())
 
 
+class JobTitleLabel(QLabel):
+    """Elide terminal identity to the available width, retaining its full text."""
+
+    def set_identity(self, text: str, terminal: bool):
+        self.full_title = text
+        self.terminal = terminal
+        self.setToolTip(text if terminal else "")
+        self.render_identity()
+
+    def render_identity(self):
+        text = self.full_title
+        if self.terminal:
+            text = self.fontMetrics().elidedText(text, Qt.TextElideMode.ElideMiddle,
+                                                max(0, self.contentsRect().width()))
+        self.setText(text)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "full_title"):
+            self.render_identity()
+
+
 class AiDMWindow(QMainWindow):
     def __init__(self, *, settings: QSettings | None = None) -> None:
         super().__init__()
@@ -162,9 +185,11 @@ class AiDMWindow(QMainWindow):
 
         self.classification = QLabel("Classification placeholder")
         self.classification.setWordWrap(True)
-        self.media_title = QLabel("Media title placeholder")
+        self.media_title = JobTitleLabel("Media title placeholder")
         self.media_title.setTextFormat(Qt.TextFormat.PlainText)
         self.media_title.setWordWrap(True)
+        self._media_title_font = self.media_title.font()
+        self._media_title_alignment = self.media_title.alignment()
         self.item_count = QLabel()
         self.mode_options, self.mode_group, self.mode_buttons = self.make_options(
             "Download as", {
@@ -221,6 +246,15 @@ class AiDMWindow(QMainWindow):
         self.retry_button = QPushButton("Retry")
         self.retry_button.clicked.connect(self.retry_download)
         self.result_message = QLabel()
+        self.result_message.setTextFormat(Qt.TextFormat.PlainText)
+        self.result_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.result_message.setWordWrap(True)
+        self.result_message.setContentsMargins(0, 16, 0, 16)
+        self.result_message.setAccessibleName("Download result")
+        result_font = self.result_message.font()
+        result_font.setPointSize(20)
+        result_font.setBold(True)
+        self.result_message.setFont(result_font)
 
         for widget in (
             self.classification,
@@ -238,7 +272,9 @@ class AiDMWindow(QMainWindow):
             self.abort_button,
             self.retry_button,
         ):
-            if widget in (self.abort_button, self.retry_button):
+            if widget is self.retry_button:
+                layout.addWidget(widget, alignment=Qt.AlignmentFlag.AlignHCenter)
+            elif widget is self.abort_button:
                 layout.addWidget(widget, alignment=Qt.AlignmentFlag.AlignRight)
             else:
                 layout.addWidget(widget)
@@ -674,6 +710,7 @@ class AiDMWindow(QMainWindow):
             GuiState.ABORTED,
         }
         downloading = state == GuiState.DOWNLOADING
+        terminal = state in {GuiState.COMPLETE, GuiState.FAILED, GuiState.ABORTED}
 
         self.heading.setVisible(True)
         self.input_field.setVisible(not downloading)
@@ -684,9 +721,21 @@ class AiDMWindow(QMainWindow):
             "● " + CLASSIFICATION_LABELS[result.kind] if result else ""
         )
         title = result.title if result else None
-        if not title and downloading and result and result.kind == InputKind.DIRECT_SINGLE:
+        if not title and (downloading or terminal):
             title = self._runtime_filename
-        self.media_title.setText(title or "")
+        title_font = QFont(self._media_title_font)
+        if terminal:
+            title_font.setPointSize(13)
+            title_font.setBold(True)
+        self.media_title.setFont(title_font)
+        self.media_title.setAlignment(Qt.AlignmentFlag.AlignCenter if terminal else self._media_title_alignment)
+        title_policy = QSizePolicy(
+            QSizePolicy.Policy.Ignored if terminal else QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred,
+        )
+        title_policy.setHeightForWidth(True)
+        self.media_title.setSizePolicy(title_policy)
+        self.media_title.set_identity(title or "", terminal)
         self.classification.setVisible(has_details and result is not None)
         self.media_title.setVisible(has_details and bool(title))
         count = result.item_count if result else None
@@ -726,28 +775,28 @@ class AiDMWindow(QMainWindow):
         if downloading:
             status = download_status or "Download status placeholder (no download running)"
         elif self.input_result.error is not None:
-            status = "Input incomplete or invalid — continue editing"
+            status = "Input incomplete or invalid — continue editing ✏️"
         elif self.inspection_error:
-            status = "Could not inspect input — check the URL and edit to retry"
+            status = "Could not inspect input — check the URL and edit to retry 🔎⚠️"
         elif self._quality_pending:
-            status = "Fetching available video qualities…"
+            status = "Fetching available video qualities… 🎞️"
         elif self._configuration_error:
-            status = self._configuration_error
+            status = self._configuration_error + (" 📁⚠️" if "folder" in self._configuration_error else " ⚠️")
         elif self._execution_deferred:
-            status = "Download configured — execution is not implemented yet."
+            status = "Download configured — execution is not implemented yet. 🧩"
         elif self.quality_choice.currentData() == VideoQuality.BEST:
-            status = "Available qualities could not be determined — best available will be used."
+            status = "Available qualities could not be determined — best available will be used. ⚠️"
         elif result is not None:
             if result.error:
-                status = result.error
+                status = result.error + " ⚠️"
             elif result.metadata_status == MetadataStatus.PENDING:
-                status = "Inspecting playlist…" if result.route == InputKind.YOUTUBE_PLAYLIST else "Fetching media information…"
+                status = "Inspecting playlist… 👀" if result.route == InputKind.YOUTUBE_PLAYLIST else "Fetching media information… 🔎"
             elif result.metadata_status == MetadataStatus.UNAVAILABLE:
-                status = "Media information unavailable"
+                status = "Media information unavailable ⚠️"
             else:
                 status = ""
         else:
-            status = "Inspecting…"
+            status = "Inspecting… 👀"
         self.active_status.setText(status)
         self.active_status.setVisible(
             state == GuiState.INSPECTING or downloading
@@ -760,10 +809,10 @@ class AiDMWindow(QMainWindow):
         self.retry_button.setVisible(
             state in {GuiState.FAILED, GuiState.ABORTED} and self._retry_job is not None
         )
-        self.result_message.setText(self._retry_error or download_status or {
-            GuiState.COMPLETE: "Download complete (state preview)",
-            GuiState.FAILED: "Download failed (state preview)",
-            GuiState.ABORTED: "Download aborted (state preview)",
+        self.result_message.setText((self._retry_error + " 📁⚠️" if self._retry_error else "") or download_status or {
+            GuiState.COMPLETE: "Download complete 🎉💫 (state preview)",
+            GuiState.FAILED: "Download failed 🚫🤕 (state preview)",
+            GuiState.ABORTED: "Download aborted 🙄 (state preview)",
         }.get(state, ""))
         self.result_message.setVisible(state in {GuiState.COMPLETE, GuiState.FAILED, GuiState.ABORTED})
         if previous_state != state and state in {

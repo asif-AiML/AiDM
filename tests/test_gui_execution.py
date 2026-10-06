@@ -155,17 +155,17 @@ class GuiExecutionTests(unittest.TestCase):
     def test_successful_semantic_event_order_and_single_completion_presentation(self):
         process, events, sequence = self.start_with_events()
         self.assertEqual(events, [StatusEvent(StatusKind.STARTING_ENGINE, "aria2c")])
-        self.assertEqual(self.window.active_status.text(), "Starting aria2c…")
+        self.assertEqual(self.window.active_status.text(), "Starting aria2c… ⚙️")
         self.window.on_download_intent()  # No duplicate launch/status.
         process.begin()
-        self.assertEqual(self.window.active_status.text(), "Downloading…")
+        self.assertEqual(self.window.active_status.text(), "Downloading… ⬇️")
         self.assertTrue(self.window.result_message.isHidden())
         process.finish()
         self.assertEqual(sequence, [StatusKind.STARTING_ENGINE, StatusKind.DOWNLOADING,
                                     StatusKind.COMPLETE, ("finished", ExecutionOutcome.COMPLETE)])
         self.assertTrue(all(isinstance(event, StatusEvent) and event.engine == "aria2c" for event in events))
         self.assertEqual(self.window._download_event, events[-1])
-        self.assertEqual(self.window.result_message.text(), "Download complete")
+        self.assertEqual(self.window.result_message.text(), "Download complete 🎉💫")
         self.assertFalse(self.window.result_message.isHidden())
         self.assertTrue(self.window.active_status.isHidden())
         process.finish()  # A repeated Qt terminal notification is ignored.
@@ -180,7 +180,7 @@ class GuiExecutionTests(unittest.TestCase):
                 process.errorOccurred.emit(QProcess.ProcessError.FailedToStart)
                 expected = [StatusKind.STARTING_ENGINE, StatusKind.FAILED, ("finished", ExecutionOutcome.FAILED)]
                 reason = StatusReason.START_FAILED
-                message = "Could not start aria2c."
+                message = "Could not start aria2c. ⚠️"
             else:
                 process.begin()
                 process.stderr = b"raw diagnostic not part of the event"
@@ -188,7 +188,7 @@ class GuiExecutionTests(unittest.TestCase):
                 expected = [StatusKind.STARTING_ENGINE, StatusKind.DOWNLOADING,
                             StatusKind.FAILED, ("finished", ExecutionOutcome.FAILED)]
                 reason = None
-                message = "Download failed"
+                message = "Download failed 🚫🤕"
                 self.assertIn(b"raw diagnostic", self.window._download_process.stderr_tail)
             self.assertEqual(sequence, expected)
             self.assertEqual(events[-1], StatusEvent(StatusKind.FAILED, "aria2c", reason))
@@ -215,12 +215,45 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertEqual(self.window.current_state, GuiState.EMPTY)
 
     def test_renderer_owns_execution_language(self):
-        self.assertEqual(render_status(StatusEvent(StatusKind.STARTING_ENGINE, "aria2c")), "Starting aria2c…")
-        self.assertEqual(render_status(StatusEvent(StatusKind.DOWNLOADING)), "Downloading…")
-        self.assertEqual(render_status(StatusEvent(StatusKind.COMPLETE)), "Download complete")
-        self.assertEqual(render_status(StatusEvent(StatusKind.FAILED)), "Download failed")
+        self.assertEqual(render_status(StatusEvent(StatusKind.STARTING_ENGINE, "aria2c")), "Starting aria2c… ⚙️")
+        self.assertEqual(render_status(StatusEvent(StatusKind.DOWNLOADING)), "Downloading… ⬇️")
+        self.assertEqual(render_status(StatusEvent(StatusKind.COMPLETE)), "Download complete 🎉💫")
+        self.assertEqual(render_status(StatusEvent(StatusKind.FAILED)), "Download failed 🚫🤕")
         self.assertEqual(render_status(StatusEvent(StatusKind.FAILED, "aria2c", StatusReason.START_FAILED)),
-                         "Could not start aria2c.")
+                         "Could not start aria2c. ⚠️")
+
+    def test_friendly_inspection_and_prominent_terminal_outcomes(self):
+        window = self.window
+        window.input_field.setText("https://example.test/file.zip")
+        window._inspection_timer.stop()
+        self.assertEqual(window.active_status.text(), "Inspecting… 👀")
+        for outcome, message in (("complete", "Download complete 🎉💫"),
+                                 ("failed", "Download failed 🚫🤕"),
+                                 ("aborted", "Download aborted 🙄")):
+            window.input_field.clear()
+            process = self.start()
+            if outcome == "aborted":
+                process.stop_on_terminate = False
+                window.abort_button.click()
+                self.assertEqual(window.active_status.text(), "Aborting… 🛑")
+                process.finish(15)
+            else:
+                process.finish(0 if outcome == "complete" else 7)
+            self.app.processEvents()
+            self.assertEqual(window.result_message.text(), message)
+            self.assertEqual(window.result_message.textFormat(), Qt.TextFormat.PlainText)
+            self.assertEqual(window.result_message.alignment(), Qt.AlignmentFlag.AlignCenter)
+            self.assertTrue(window.result_message.font().bold())
+            self.assertGreater(window.result_message.font().pointSize(), window.active_status.font().pointSize())
+            self.assertGreaterEqual(window.result_message.contentsMargins().top(), 16)
+            self.assertEqual(window.retry_button.isHidden(), outcome == "complete")
+            if outcome != "complete":
+                self.assertGreater(window.retry_button.y(), window.result_message.y())
+                self.assertLessEqual(abs(window.retry_button.geometry().center().x()
+                                         - window.result_message.geometry().center().x()), 1)
+            self.assertTrue(window.abort_button.isHidden())
+            self.assertEqual(window.classification.text(), "● Direct download")
+            self.assertEqual(window.retry_button.text(), "Retry")
 
     def test_close_does_not_publish_a_spurious_completion(self):
         process, events, sequence = self.start_with_events()
@@ -248,7 +281,7 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertEqual(self.window.progress.value(), 38)  # Deliberate truncation.
         self.assertEqual(self.window._progress_event.percent, 38.6)
         self.assertEqual(self.window.statistics.text(), "4.8 MB/s • 812 MB / 2.1 GB • ETA 04:37")
-        self.assertEqual(self.window.active_status.text(), "Downloading…")
+        self.assertEqual(self.window.active_status.text(), "Downloading… ⬇️")
         self.assertEqual(self.window.current_state, GuiState.DOWNLOADING)
         process.stdout = b"[#abcdef 900000000B/2100000000B(42%) CN:1 DL:5000000B]\n"
         process.readyReadStandardOutput.emit()
@@ -324,7 +357,7 @@ class GuiExecutionTests(unittest.TestCase):
         process = self.start()
         window = self.window
         self.assertEqual(window.current_state, GuiState.DOWNLOADING)
-        self.assertEqual(window.active_status.text(), "Starting aria2c…")
+        self.assertEqual(window.active_status.text(), "Starting aria2c… ⚙️")
         self.assertFalse(window.input_field.isEnabled())
         self.assertFalse(window.browse_button.isEnabled())
         for control in (window.download_button, window.progress, window.retry_button):
@@ -336,7 +369,7 @@ class GuiExecutionTests(unittest.TestCase):
             picker.assert_not_called()
         self.assertEqual(window.current_state, GuiState.DOWNLOADING)
         process.begin()
-        self.assertEqual(window.active_status.text(), "Downloading…")
+        self.assertEqual(window.active_status.text(), "Downloading… ⬇️")
 
     def test_active_layout_hides_configuration_and_preserves_identity_and_input(self):
         self.inspect()
@@ -381,7 +414,7 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertFalse(window.statistics.isHidden())
         self.assertEqual(window.statistics.text(), "181.2 KB/s • 124.9 MB downloaded")
         self.assertFalse(window.active_status.isHidden())
-        self.assertEqual(window.active_status.text(), "Downloading…")
+        self.assertEqual(window.active_status.text(), "Downloading… ⬇️")
         self.assertLess(window.classification.y(), window.media_title.y())
         self.assertLess(window.media_title.y(), window.statistics.y())
         self.assertLess(window.statistics.y(), window.active_status.y())
@@ -409,7 +442,7 @@ class GuiExecutionTests(unittest.TestCase):
             self.assertEqual(window.media_title.text(), names[0])
             self.assertFalse(window.media_title.isHidden())
             self.assertEqual(window.media_title.textFormat(), Qt.TextFormat.PlainText)
-            self.assertEqual(window.active_status.text(), "Downloading…")
+            self.assertEqual(window.active_status.text(), "Downloading… ⬇️")
             self.assertIsNone(window.inspection_result.title)
             self.assertIsNone(worker.job.title)
             process.stdout = "FILE: /tmp/My 日本語 File (2026).zip\nFILE: /tmp/<b>changed.zip\n".encode()
@@ -431,7 +464,8 @@ class GuiExecutionTests(unittest.TestCase):
         process.readyReadStandardOutput.emit()
         process.finish()
         self.assertEqual(window._runtime_filename, "first.zip")
-        self.assertTrue(window.media_title.isHidden())
+        self.assertFalse(window.media_title.isHidden())
+        self.assertEqual(window.media_title.text(), "first.zip")
         window.preview_state(GuiState.EMPTY)
         self.assertIsNone(window._runtime_filename)
         self.start()
@@ -452,11 +486,70 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertIsNone(window._runtime_filename)
         self.assertEqual(window.current_state, GuiState.EMPTY)
 
+    def test_terminal_identity_retention_style_and_retry_reset(self):
+        for outcome in ("complete", "failed", "aborted"):
+            self.window.input_field.clear()
+            process = self.start()
+            window = self.window
+            active_font = window.media_title.font()
+            active_alignment = window.media_title.alignment()
+            worker = window._download_process
+            worker.filename_resolved.emit("actual-file-name.ext")
+            self.assertFalse(window.media_title.isHidden())
+            if outcome == "aborted":
+                window.abort_button.click()
+            else:
+                process.finish(0 if outcome == "complete" else 7)
+            self.app.processEvents()
+            self.assertFalse(window.media_title.isHidden())
+            self.assertEqual(window.media_title.text(), "actual-file-name.ext")
+            self.assertTrue(window.media_title.font().bold())
+            self.assertEqual(window.media_title.alignment(), Qt.AlignmentFlag.AlignCenter)
+            self.assertEqual(window.media_title.textFormat(), Qt.TextFormat.PlainText)
+            self.assertTrue(window.media_title.wordWrap())
+            self.assertGreater(window.result_message.font().pointSize(), window.media_title.font().pointSize())
+            self.assertLess(window.classification.y(), window.media_title.y())
+            self.assertLess(window.media_title.y(), window.result_message.y())
+            self.assertEqual(window.retry_button.isHidden(), outcome == "complete")
+            if outcome != "complete":
+                window.retry_button.click()
+                self.assertTrue(window.media_title.isHidden())
+                self.assertEqual(window.media_title.font(), active_font)
+                self.assertEqual(window.media_title.alignment(), active_alignment)
+                window._download_process.process.finish()
+
+    def test_terminal_identity_is_route_neutral_and_wraps_long_names(self):
+        self.inspect(InputKind.YOUTUBE_SINGLE)
+        window = self.window
+        # Presentation fixture only: no YouTube execution/metadata work.
+        window._runtime_filename = "runtime-name.ext"
+        title = "Very.Long.Movie.Release.Name.2018.480p.WEBRip.x264.AAC.mkv" * 3
+        window.inspection_result = replace(window.inspection_result, title=title)
+        for state in (GuiState.COMPLETE, GuiState.FAILED, GuiState.ABORTED):
+            window.resize(480, window.height())
+            window.set_state(state)
+            self.app.processEvents()
+            self.assertEqual(window.media_title.full_title, title)
+            self.assertEqual(window.media_title.toolTip(), title)
+            self.assertIn("…", window.media_title.text())
+            self.assertLessEqual(window.media_title.fontMetrics().horizontalAdvance(window.media_title.text()),
+                                 window.media_title.width())
+            self.assertLessEqual(window.width(), 480)
+            self.assertLessEqual(window.media_title.width(), window.width() - 56)
+        window.inspection_result = replace(window.inspection_result, title=None)
+        window.set_state(GuiState.COMPLETE)
+        self.assertEqual(window.media_title.text(), "runtime-name.ext")
+        window._runtime_filename = None
+        for state in (GuiState.COMPLETE, GuiState.FAILED, GuiState.ABORTED):
+            window.set_state(state)
+            self.assertTrue(window.media_title.isHidden())
+            self.assertEqual(window.media_title.text(), "")
+
     def test_exit_status_success_failure_and_crash(self):
         for code, status, expected, message in (
-            (0, QProcess.ExitStatus.NormalExit, GuiState.COMPLETE, "Download complete"),
-            (7, QProcess.ExitStatus.NormalExit, GuiState.FAILED, "Download failed"),
-            (0, QProcess.ExitStatus.CrashExit, GuiState.FAILED, "Download failed"),
+            (0, QProcess.ExitStatus.NormalExit, GuiState.COMPLETE, "Download complete 🎉💫"),
+            (7, QProcess.ExitStatus.NormalExit, GuiState.FAILED, "Download failed 🚫🤕"),
+            (0, QProcess.ExitStatus.CrashExit, GuiState.FAILED, "Download failed 🚫🤕"),
         ):
             process = self.start()
             process.begin()
@@ -473,10 +566,10 @@ class GuiExecutionTests(unittest.TestCase):
         process.current_state = QProcess.ProcessState.NotRunning
         process.errorOccurred.emit(QProcess.ProcessError.FailedToStart)
         self.assertEqual(self.window.current_state, GuiState.FAILED)
-        self.assertEqual(self.window.result_message.text(), "Could not start aria2c.")
+        self.assertEqual(self.window.result_message.text(), "Could not start aria2c. ⚠️")
         # A duplicate terminal signal cannot replace the startup diagnosis.
         process.finish(1)
-        self.assertEqual(self.window.result_message.text(), "Could not start aria2c.")
+        self.assertEqual(self.window.result_message.text(), "Could not start aria2c. ⚠️")
 
     def test_disappeared_destination_never_launches_or_redirects(self):
         folder = self.directory / "removed"
@@ -489,7 +582,7 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertEqual(self.window.current_state, GuiState.READY)
         self.assertEqual(self.window.destination, str(folder))
         self.assertEqual(self.window.active_status.text(),
-                         "Download folder is unavailable — choose another folder.")
+                         "Download folder is unavailable — choose another folder. 📁⚠️")
         self.assertFalse(self.window.destination_section.isHidden())
 
     def test_all_other_routes_remain_deferred_including_inspector_direct(self):
@@ -554,7 +647,7 @@ class GuiExecutionTests(unittest.TestCase):
         with patch("gui_execution.build_direct_command", return_value=[str(self.directory / "missing-aria2c")]):
             self.start()
             self.wait_for(lambda: self.window.current_state == GuiState.FAILED)
-            self.assertEqual(self.window.result_message.text(), "Could not start aria2c.")
+            self.assertEqual(self.window.result_message.text(), "Could not start aria2c. ⚠️")
         with patch("gui_execution.build_direct_command", return_value=[
             sys.executable, "-B", "-c", "import time; time.sleep(30)",
         ]):
@@ -579,7 +672,7 @@ class GuiExecutionTests(unittest.TestCase):
         window.abort_download()
         self.assertEqual(process.calls.count("terminate"), 1)
         self.assertFalse(any(isinstance(call, tuple) and call[0] == "wait" for call in process.calls))
-        self.assertEqual(window.active_status.text(), "Aborting…")
+        self.assertEqual(window.active_status.text(), "Aborting… 🛑")
         self.assertFalse(window.abort_button.isEnabled())
         self.assertEqual(window.current_state, GuiState.DOWNLOADING)
         old.progress_event.emit(ProgressEvent(70))
@@ -591,7 +684,7 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertEqual(window._progress_event.percent, 63)
         process.finish(9, QProcess.ExitStatus.CrashExit)
         self.assertEqual(window.current_state, GuiState.ABORTED)
-        self.assertEqual(window.result_message.text(), "Download aborted")
+        self.assertEqual(window.result_message.text(), "Download aborted 🙄")
         self.assertTrue(window.abort_button.isHidden())
         self.assertTrue(window.progress.isHidden())
         self.assertTrue(window.retry_button.isVisible())
@@ -651,12 +744,12 @@ class GuiExecutionTests(unittest.TestCase):
         worker = self.window._download_process
         worker.abort()
         process.begin()
-        self.assertEqual(self.window.active_status.text(), "Aborting…")
+        self.assertEqual(self.window.active_status.text(), "Aborting… 🛑")
         self.assertEqual(process.calls.count("terminate"), 2)
         process.current_state = QProcess.ProcessState.NotRunning
         process.errorOccurred.emit(QProcess.ProcessError.FailedToStart)
         self.assertEqual(self.window.current_state, GuiState.FAILED)
-        self.assertEqual(self.window.result_message.text(), "Could not start aria2c.")
+        self.assertEqual(self.window.result_message.text(), "Could not start aria2c. ⚠️")
         self.assertFalse(worker._abort_timer.isActive())
         self.assertTrue(self.window.retry_button.isVisible())
 
@@ -693,7 +786,7 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertIs(self.window._download_process, old)
         self.assertEqual(self.window.current_state, GuiState.FAILED)
         self.assertEqual(self.window.result_message.text(),
-                         "Download folder is unavailable — choose another folder.")
+                         "Download folder is unavailable — choose another folder. 📁⚠️")
         self.window.input_field.clear()
         self.assertIsNone(self.window._retry_job)
         self.assertTrue(self.window.retry_button.isHidden())
@@ -732,7 +825,7 @@ class GuiExecutionTests(unittest.TestCase):
             self.window.on_download_intent()
             worker = attempts[0]
             worker.process.begin()
-            self.assertEqual(self.window.active_status.text(), "Downloading…")
+            self.assertEqual(self.window.active_status.text(), "Downloading… ⬇️")
             worker.progress_event.emit(ProgressEvent(23))
             self.assertEqual(self.window.progress.value(), 23)
             self.window.abort_button.click()

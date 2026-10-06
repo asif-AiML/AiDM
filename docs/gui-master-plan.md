@@ -842,6 +842,33 @@ owns the current QProcess; future multi-process adapters must account for their
 additional children without duplicating the GUI lifecycle. No additional engine
 execution, pause or manual resume is introduced.
 
+## Milestone 14.1 GUI tone and terminal emphasis
+
+GUI-rendered activity, inspection, warnings and outcomes use restrained emoji
+cues. Structural route labels, filenames, metrics and action buttons remain
+undecorated. Emoji supplements understandable text, never replaces meaning;
+backend event values and lifecycle semantics are unchanged.
+
+COMPLETE, FAILED and ABORTED use a centered, bold 20-point plain-text result
+with vertical padding and wrapping. Retry is centered immediately below failed
+or aborted retryable outcomes; success has no Retry. Active status keeps its
+normal smaller font. Existing input/identity presentation and lifecycle remain
+intact. Fonts and colors use the system; no emoji font, custom color palette,
+rich text or new dependency is introduced. Monochrome/platform-specific emoji
+rendering is acceptable.
+
+## Milestone 14.2 terminal identity retention
+
+Terminal states retain the same genuine identity used during execution:
+inspection title first, runtime-resolved filename second, otherwise no title.
+The hierarchy is classification → title → terminal outcome → Retry when eligible.
+Terminal titles are centered, bold 13-point plain text, below the 20-point result
+banner in emphasis. Long terminal names elide in the middle within the available
+width, preserving the full identity internally and in a tooltip. Active title
+styling is unchanged. Retry clears runtime
+identity for the new attempt as before. No URL fallback, parsing or metadata
+request is introduced; identity presentation is route neutral.
+
 ---
 
 # 18. Torrent UI scope

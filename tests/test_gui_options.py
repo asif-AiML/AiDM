@@ -85,7 +85,7 @@ class GuiOptionsTests(unittest.TestCase):
         self.assertFalse(self.window.mode_options.isHidden())
         self.assertIsNone(self.window.mode_group.checkedButton())
         self.window.mode_buttons[YouTubeMode.VIDEO].click()
-        self.assertEqual(self.window.active_status.text(), "Fetching available video qualities…")
+        self.assertEqual(self.window.active_status.text(), "Fetching available video qualities… 🎞️")
         self.assertTrue(self.window.quality_options.isHidden())
         self.assertTrue(self.window.download_button.isHidden())
         return self.workers[-1]
@@ -141,7 +141,7 @@ class GuiOptionsTests(unittest.TestCase):
         self.window.download_button.click()
         self.assertTrue(self.window.mode_options.isHidden())
         self.assertEqual(self.workers[-1].url, url)
-        self.assertEqual(self.window.active_status.text(), "Fetching available video qualities…")
+        self.assertEqual(self.window.active_status.text(), "Fetching available video qualities… 🎞️")
         worker = self.workers[-1]
         worker.finished.emit(worker.revision, [])
         self.assertEqual(self.window.download_job.video_quality, VideoQuality.BEST)
