@@ -724,10 +724,48 @@ state transitions depend only on `finished(success)`, never rendered text.
 While active, only `active_status` shows activity; after completion/failure,
 only `result_message` shows the result. Bounded stderr stays separate.
 
-StatusEvent answers **what is happening**. Future ProgressEvent, beginning in
+StatusEvent answers **what is happening**. ProgressEvent, introduced in
 Milestone 12, answers **how far it has progressed**. No progress fields, parsing,
-filename discovery or artificial finalization stage are introduced here.
+filename discovery or artificial finalization stage belong in StatusEvent.
 Inspection/configuration statuses and the CLI renderer remain unchanged.
+
+## Milestone 12 direct-single telemetry
+
+Only DIRECT_SINGLE aria2c execution emits progress. The path is:
+`aria2c stdout → Aria2ProgressParser → ProgressEvent → GUI presentation`.
+The frozen, Qt-independent ProgressEvent contains independently optional
+`percent`, `downloaded_bytes`, `total_bytes`, `speed_bytes_per_second`, and
+`eta_seconds`. Values must be non-negative (percent 0–100); missing values are
+valid. No title/filename extraction or additional execution route is introduced.
+
+`build_direct_command(..., telemetry=True)` opts the GUI into full, uncolored
+console readouts with exact byte counts using `--show-console-readout=true`,
+`--enable-color=false`, `--truncate-console-readout=false` and
+`--human-readable=false`. The existing `--summary-interval=1` is retained.
+CLI callers omit telemetry and retain their existing flags and cwd output.
+
+The isolated backend parser is verified against installed aria2c 1.37.0 local
+HTTP captures in `tests/fixtures/aria2/`. It frames arbitrary stdout chunks across
+CR/LF delimiters, flushes complete trailing records on exit, bounds its buffer,
+and ignores unrelated/malformed lines. It accepts exact B values and binary
+KiB/MiB/GiB readouts; fractional human-readable values are truncated to integer
+bytes after conversion. `DL` represents bytes/second. ETA h/m/s becomes seconds.
+Aria2's `/0B` unknown-total sentinel becomes None. Percent is used only when
+reported, never inferred from time or forced to 100 on success.
+
+The GUI shows a 0–100 bar only when a real percent is available, truncating its
+display to integer percent while retaining event precision. Below it, a compact
+statistics label uses decimal SI units (1000 B = 1 KB), up to one decimal place,
+and MM:SS or H:MM:SS ETA. Unknown components are omitted. Each event replaces the
+current snapshot, so a missing ETA/percent cannot leave stale values visible.
+StatusEvent independently supplies the activity text beneath these metrics;
+ProgressEvent never transitions GuiState.
+
+Completion and failure retain the last real snapshot, even if below 100%; a
+successful exit does not manufacture telemetry. Input changes, new jobs and
+development state resets clear the snapshot. Late events from an old process
+are ignored. No user-facing Abort, retry or progress support for other routes
+is included.
 
 ---
 

@@ -1,8 +1,9 @@
-"""Qt process adapter for single direct jobs only; no telemetry or Abort UI."""
+"""Qt process adapter and telemetry for single direct jobs only; no Abort UI."""
 
 from PySide6.QtCore import QObject, QProcess, Signal
 
 from download_job import DownloadJob
+from aria2_progress import Aria2ProgressParser
 from downloader import build_direct_command
 from inspection import InputKind
 from status_event import StatusEvent, StatusKind, StatusReason
@@ -10,6 +11,7 @@ from status_event import StatusEvent, StatusKind, StatusReason
 
 class DirectDownloadProcess(QObject):
     status_event = Signal(object)  # Payload: shared, Qt-independent StatusEvent.
+    progress_event = Signal(object)  # Payload: Qt-independent ProgressEvent.
     finished = Signal(bool)
     MAX_STDERR_BYTES = 65536
 
@@ -23,6 +25,7 @@ class DirectDownloadProcess(QObject):
         self.done = False
         self.closing = False
         self.stderr_tail = b""
+        self._progress_parser = Aria2ProgressParser()
         self.process = QProcess(self)
         self.process.setStandardInputFile(QProcess.nullDevice())
         self.process.started.connect(self.on_started)
@@ -34,7 +37,7 @@ class DirectDownloadProcess(QObject):
     def start(self):
         if self.active or self.done:
             return
-        command = build_direct_command(self.job.urls[0], self.job.destination)
+        command = build_direct_command(self.job.urls[0], self.job.destination, telemetry=True)
         self.active = True
         self.status_event.emit(StatusEvent(StatusKind.STARTING_ENGINE, engine="aria2c"))
         self.process.start(command[0], command[1:])
@@ -44,9 +47,14 @@ class DirectDownloadProcess(QObject):
             self.status_event.emit(StatusEvent(StatusKind.DOWNLOADING, engine="aria2c"))
 
     def drain_output(self):
-        self.process.readAllStandardOutput()
+        self.emit_progress(bytes(self.process.readAllStandardOutput()))
         chunk = bytes(self.process.readAllStandardError())
         self.stderr_tail = (self.stderr_tail + chunk)[-self.MAX_STDERR_BYTES:]
+
+    def emit_progress(self, chunk, *, final=False):
+        if not self.done and not self.closing:
+            for event in self._progress_parser.feed(chunk, final=final):
+                self.progress_event.emit(event)
 
     def on_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
@@ -54,6 +62,7 @@ class DirectDownloadProcess(QObject):
 
     def on_finished(self, code, status):
         self.drain_output()
+        self.emit_progress(b"", final=True)
         success = code == 0 and status == QProcess.ExitStatus.NormalExit
         self.complete(success)
 

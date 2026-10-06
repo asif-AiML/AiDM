@@ -16,3 +16,6 @@ __pycache__/
 !/tests/test_gui_execution.py
 # Persistent status-event contract regressions (Milestone 11)
 !/tests/test_status_event.py
+# Persistent telemetry regressions and captured console fixtures (Milestone 12)
+!/tests/test_progress.py
+!/tests/fixtures/

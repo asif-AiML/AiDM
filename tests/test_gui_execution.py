@@ -22,6 +22,7 @@ from gui_execution import DirectDownloadProcess
 from inspection import InputKind, InspectionResult
 from stream_parser import StreamInput
 from status_event import StatusEvent, StatusKind, StatusReason
+from progress_event import ProgressEvent
 
 
 class FakeProcess(QObject):
@@ -227,6 +228,75 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertEqual(sequence, [StatusKind.STARTING_ENGINE, StatusKind.DOWNLOADING])
         self.assertEqual(process.state(), QProcess.ProcessState.NotRunning)
 
+    def test_chunked_progress_signal_and_gui_rendering(self):
+        process = self.start()
+        worker = self.window._download_process
+        events = []
+        worker.progress_event.connect(events.append)
+        self.assertIsNone(self.window._progress_event)
+        self.assertTrue(self.window.progress.isHidden())
+        self.assertTrue(self.window.statistics.isHidden())
+        process.begin()
+        process.stdout = b"warning 90%\n[#abcdef 812000000B/2100000000B(38.6%) CN:1 DL:480"
+        process.readyReadStandardOutput.emit()
+        self.assertEqual(events, [])
+        process.stdout = b"0000B ETA:4m37s]\r\n"
+        process.readyReadStandardOutput.emit()
+        self.assertEqual(events, [ProgressEvent(38.6, 812000000, 2100000000, 4800000, 277)])
+        self.assertFalse(self.window.progress.isHidden())
+        self.assertEqual(self.window.progress.value(), 38)  # Deliberate truncation.
+        self.assertEqual(self.window._progress_event.percent, 38.6)
+        self.assertEqual(self.window.statistics.text(), "4.8 MB/s • 812 MB / 2.1 GB • ETA 04:37")
+        self.assertEqual(self.window.active_status.text(), "Downloading…")
+        self.assertEqual(self.window.current_state, GuiState.DOWNLOADING)
+        process.stdout = b"[#abcdef 900000000B/2100000000B(42%) CN:1 DL:5000000B]\n"
+        process.readyReadStandardOutput.emit()
+        self.assertEqual([event.percent for event in events], [38.6, 42])
+        self.assertNotIn("ETA", self.window.statistics.text())
+
+    def test_unknown_percent_partial_fields_and_no_state_changes(self):
+        self.start()
+        worker = self.window._download_process
+        worker.progress_event.emit(ProgressEvent(10, 100, 1000, 20, 45))
+        worker.progress_event.emit(ProgressEvent(downloaded_bytes=150, speed_bytes_per_second=20))
+        self.assertTrue(self.window.progress.isHidden())
+        self.assertEqual(self.window.statistics.text(), "20 B/s • 150 B downloaded")
+        worker.progress_event.emit(ProgressEvent(eta_seconds=37))
+        self.assertEqual(self.window.statistics.text(), "ETA 00:37")
+        self.assertEqual(self.window.current_state, GuiState.DOWNLOADING)
+
+    def test_final_tail_and_terminal_states_never_manufacture_100(self):
+        for code in (0, 7):
+            self.window.input_field.clear()
+            process = self.start()
+            process.stdout = b"[#abcdef 933888B/1048576B(89%) CN:1 DL:325283B]"
+            process.finish(code)
+            self.assertEqual(self.window.current_state, GuiState.COMPLETE if code == 0 else GuiState.FAILED)
+            self.assertEqual(self.window._progress_event.percent, 89)
+            self.assertEqual(self.window.progress.value(), 89)
+            self.assertFalse(self.window.progress.isHidden())
+            self.assertFalse(self.window.statistics.isHidden())
+        self.window.input_field.clear()
+        process = self.start()
+        process.finish()
+        self.assertIsNone(self.window._progress_event)
+        self.assertTrue(self.window.progress.isHidden())
+        self.assertTrue(self.window.statistics.isHidden())
+
+    def test_reset_and_late_telemetry_from_previous_job(self):
+        process = self.start()
+        old = self.window._download_process
+        old.progress_event.emit(ProgressEvent(50, 500, 1000))
+        process.finish()
+        self.window.input_field.clear()
+        self.assertIsNone(self.window._progress_event)
+        self.assertEqual(self.window.statistics.text(), "")
+        self.assertTrue(self.window.progress.isHidden())
+        self.start()
+        old.progress_event.emit(ProgressEvent(99, 990, 1000))
+        self.assertIsNone(self.window._progress_event)
+        self.assertTrue(self.window.progress.isHidden())
+
     def test_passive_job_and_exact_shared_command_started_once(self):
         self.inspect()
         job = self.window.download_job
@@ -241,9 +311,9 @@ class GuiExecutionTests(unittest.TestCase):
             self.window.on_download_intent()
             self.window.download_button.click()
             worker.start()
-            build.assert_called_once_with(job.urls[0], job.destination)
+            build.assert_called_once_with(job.urls[0], job.destination, telemetry=True)
         self.assertEqual(worker.job, job)
-        command = build_direct_command(job.urls[0], job.destination)
+        command = build_direct_command(job.urls[0], job.destination, telemetry=True)
         self.assertEqual(worker.process.calls, [(command[0], command[1:])])
 
     def test_start_status_edit_lock_and_preview_cannot_interrupt(self):

@@ -21,6 +21,14 @@ class DirectCommandTests(unittest.TestCase):
             self.assertEqual(downloader.build_direct_command(self.URL, "/tmp/example folder"),
                              self.FLAGS + ["--dir=/tmp/example folder", self.URL])
 
+    def test_telemetry_is_opt_in_and_keeps_direct_flags(self):
+        telemetry = ["--show-console-readout=true", "--enable-color=false",
+                     "--truncate-console-readout=false", "--human-readable=false"]
+        self.assertEqual(downloader.build_direct_command(self.URL, "/tmp/example", telemetry=True),
+                         self.FLAGS + telemetry + ["--dir=/tmp/example", self.URL])
+        self.assertEqual(downloader.build_direct_command(self.URL, telemetry=False),
+                         self.FLAGS + [self.URL])
+
     def test_blocking_cli_wrapper_reuses_builder_and_returns_exit_code(self):
         for destination in (None, "/tmp/example"):
             with patch.object(downloader, "build_direct_command", return_value=["fixture"]) as build, \

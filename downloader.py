@@ -51,7 +51,9 @@ def download_torrent(torrent_path: str) -> int:
     return run_command(command)
 
 
-def build_direct_command(url: str, destination: str | None = None) -> list[str]:
+def build_direct_command(
+    url: str, destination: str | None = None, *, telemetry: bool = False,
+) -> list[str]:
     """Shared direct-download flags; omitted destination preserves CLI cwd."""
     command = [
         "aria2c",
@@ -62,6 +64,12 @@ def build_direct_command(url: str, destination: str | None = None) -> list[str]:
         "--console-log-level=warn",
         "--summary-interval=1",
     ]
+    if telemetry:
+        # Full, uncolored records with exact bytes for the GUI's isolated parser.
+        command.extend([
+            "--show-console-readout=true", "--enable-color=false",
+            "--truncate-console-readout=false", "--human-readable=false",
+        ])
     if destination is not None:
         command.append(f"--dir={destination}")
     command.append(url)

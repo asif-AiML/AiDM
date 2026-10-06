@@ -31,9 +31,11 @@ from gui_input import validate_gui_input
 from gui_execution import DirectDownloadProcess
 from gui_metadata import MetadataProcess
 from gui_quality import QualityProcess
+from gui_progress import format_statistics
 from inspection import classify_input, InputKind, MetadataStatus
 from metadata import prepare_metadata
 from status_event import StatusEvent, StatusKind, StatusReason
+from progress_event import ProgressEvent
 
 
 def render_status(event: StatusEvent) -> str:
@@ -199,8 +201,11 @@ class AiDMWindow(QMainWindow):
         self.download_button.clicked.connect(self.on_download_intent)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.progress.setTextVisible(False)
+        self.progress.reset()
+        self.progress.setTextVisible(True)
+        self.statistics = QLabel()
+        self.statistics.setTextFormat(Qt.TextFormat.PlainText)
+        self.statistics.setWordWrap(True)
         self.active_status = QLabel()
         self.active_status.setTextFormat(Qt.TextFormat.PlainText)
         self.active_status.setWordWrap(True)
@@ -215,9 +220,10 @@ class AiDMWindow(QMainWindow):
             self.bulk_options,
             self.quality_options,
             self.destination_section,
+            self.progress,
+            self.statistics,
             self.active_status,
             self.download_button,
-            self.progress,
             self.abort_button,
             self.result_message,
         ):
@@ -238,6 +244,7 @@ class AiDMWindow(QMainWindow):
         self._execution_deferred = False
         self._download_process = None
         self._download_event: StatusEvent | None = None
+        self._progress_event: ProgressEvent | None = None
         self._quality_generation = 0
         self._quality_worker = None
         self._quality_pending = False
@@ -377,8 +384,10 @@ class AiDMWindow(QMainWindow):
             self._download_process.deleteLater()
         self._download_process = DirectDownloadProcess(job, self)
         self._download_process.status_event.connect(self.on_download_status)
+        self._download_process.progress_event.connect(self.on_download_progress)
         self._download_process.finished.connect(self.on_download_finished)
         self._download_event = None
+        self._progress_event = None
         self.set_state(GuiState.DOWNLOADING)
         self._download_process.start()
 
@@ -392,6 +401,13 @@ class AiDMWindow(QMainWindow):
     def on_download_finished(self, success):
         if not self._closing:
             self.set_state(GuiState.COMPLETE if success else GuiState.FAILED)
+
+    @Slot(object)
+    def on_download_progress(self, event: ProgressEvent):
+        if (not self._closing and self.current_state == GuiState.DOWNLOADING
+                and self.sender() is self._download_process):
+            self._progress_event = event
+            self.set_state(self.current_state)
 
     def on_mode_changed(self):
         if not self._configuration_started or not self.usable_input():
@@ -479,6 +495,7 @@ class AiDMWindow(QMainWindow):
         if self.download_active():
             return
         self._download_event = None
+        self._progress_event = None
         self._revision += 1
         self.reset_configuration()
         self.cancel_metadata()
@@ -564,6 +581,7 @@ class AiDMWindow(QMainWindow):
         if self.download_active():
             return
         self._download_event = None
+        self._progress_event = None
         self._revision += 1
         self.reset_configuration()
         self.cancel_metadata()
@@ -631,8 +649,18 @@ class AiDMWindow(QMainWindow):
         self.download_button.setEnabled(state == GuiState.READY and self.usable_input())
         for shortcut in self._enter_shortcuts:
             shortcut.setEnabled(state == GuiState.READY and self.usable_input())
-        self.progress.setVisible(False)
-        self.progress.setEnabled(False)
+        telemetry_visible = state in {GuiState.DOWNLOADING, GuiState.COMPLETE, GuiState.FAILED}
+        progress = self._progress_event
+        percent = progress.percent if progress else None
+        if percent is None:
+            self.progress.reset()
+        else:
+            # Truncate only for display; preserve fractional precision in the event.
+            self.progress.setValue(int(percent))
+        self.progress.setVisible(telemetry_visible and percent is not None)
+        statistics = format_statistics(progress) if progress else ""
+        self.statistics.setText(statistics)
+        self.statistics.setVisible(telemetry_visible and bool(statistics))
         download_status = render_status(self._download_event) if self._download_event else ""
         if downloading:
             status = download_status or "Download status placeholder (no download running)"
