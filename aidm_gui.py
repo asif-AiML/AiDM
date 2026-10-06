@@ -249,6 +249,7 @@ class AiDMWindow(QMainWindow):
         self._download_process = None
         self._download_event: StatusEvent | None = None
         self._progress_event: ProgressEvent | None = None
+        self._runtime_filename: str | None = None
         self._quality_generation = 0
         self._quality_worker = None
         self._quality_pending = False
@@ -389,9 +390,11 @@ class AiDMWindow(QMainWindow):
         self._download_process = DirectDownloadProcess(job, self)
         self._download_process.status_event.connect(self.on_download_status)
         self._download_process.progress_event.connect(self.on_download_progress)
+        self._download_process.filename_resolved.connect(self.on_filename_resolved)
         self._download_process.finished.connect(self.on_download_finished)
         self._download_event = None
         self._progress_event = None
+        self._runtime_filename = None
         self.set_state(GuiState.DOWNLOADING)
         self._download_process.start()
 
@@ -411,6 +414,13 @@ class AiDMWindow(QMainWindow):
         if (not self._closing and self.current_state == GuiState.DOWNLOADING
                 and self.sender() is self._download_process):
             self._progress_event = event
+            self.set_state(self.current_state)
+
+    @Slot(str)
+    def on_filename_resolved(self, filename: str):
+        if (not self._closing and self.current_state == GuiState.DOWNLOADING
+                and self.sender() is self._download_process):
+            self._runtime_filename = filename
             self.set_state(self.current_state)
 
     def on_mode_changed(self):
@@ -500,6 +510,7 @@ class AiDMWindow(QMainWindow):
             return
         self._download_event = None
         self._progress_event = None
+        self._runtime_filename = None
         self._revision += 1
         self.reset_configuration()
         self.cancel_metadata()
@@ -586,6 +597,7 @@ class AiDMWindow(QMainWindow):
             return
         self._download_event = None
         self._progress_event = None
+        self._runtime_filename = None
         self._revision += 1
         self.reset_configuration()
         self.cancel_metadata()
@@ -631,6 +643,8 @@ class AiDMWindow(QMainWindow):
             "● " + CLASSIFICATION_LABELS[result.kind] if result else ""
         )
         title = result.title if result else None
+        if not title and downloading and result and result.kind == InputKind.DIRECT_SINGLE:
+            title = self._runtime_filename
         self.media_title.setText(title or "")
         self.classification.setVisible(has_details and result is not None)
         self.media_title.setVisible(has_details and bool(title))

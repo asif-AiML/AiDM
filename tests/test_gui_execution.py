@@ -385,6 +385,72 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertLess(window.media_title.y(), window.statistics.y())
         self.assertLess(window.statistics.y(), window.active_status.y())
 
+    def test_runtime_filename_before_and_after_progress_with_deduplication(self):
+        for progress_first in (False, True):
+            self.window.input_field.clear()
+            process = self.start()
+            window = self.window
+            worker = window._download_process
+            names = []
+            worker.filename_resolved.connect(names.append)
+            self.assertIsNone(window._runtime_filename)
+            self.assertIsNone(window.inspection_result.title)
+            self.assertTrue(window.media_title.isHidden())
+            process.begin()
+            if progress_first:
+                worker.progress_event.emit(ProgressEvent(30))
+            process.stdout = b"FI"
+            process.readyReadStandardOutput.emit()
+            self.assertEqual(names, [])
+            process.stdout = "LE: /tmp/My 日本語 File (2026).zip\r\n".encode()
+            process.readyReadStandardOutput.emit()
+            self.assertEqual(names, ["My 日本語 File (2026).zip"])
+            self.assertEqual(window.media_title.text(), names[0])
+            self.assertFalse(window.media_title.isHidden())
+            self.assertEqual(window.media_title.textFormat(), Qt.TextFormat.PlainText)
+            self.assertEqual(window.active_status.text(), "Downloading…")
+            self.assertIsNone(window.inspection_result.title)
+            self.assertIsNone(worker.job.title)
+            process.stdout = "FILE: /tmp/My 日本語 File (2026).zip\nFILE: /tmp/<b>changed.zip\n".encode()
+            process.readyReadStandardOutput.emit()
+            self.assertEqual(names, ["My 日本語 File (2026).zip", "<b>changed.zip"])
+            worker.progress_event.emit(ProgressEvent(40))
+            self.assertEqual(window.media_title.text(), "<b>changed.zip")
+            # Genuine backend/inspection title has precedence over filename.
+            window.inspection_result = replace(window.inspection_result, title="Known title")
+            window.set_state(GuiState.DOWNLOADING)
+            self.assertEqual(window.media_title.text(), "Known title")
+            process.finish()
+
+    def test_runtime_filename_reset_and_stale_signal_guard(self):
+        process = self.start()
+        window = self.window
+        old = window._download_process
+        process.stdout = b"FILE: /tmp/first.zip\n"
+        process.readyReadStandardOutput.emit()
+        process.finish()
+        self.assertEqual(window._runtime_filename, "first.zip")
+        self.assertTrue(window.media_title.isHidden())
+        window.preview_state(GuiState.EMPTY)
+        self.assertIsNone(window._runtime_filename)
+        self.start()
+        old.filename_resolved.emit("stale.zip")
+        self.assertIsNone(window._runtime_filename)
+        self.assertTrue(window.media_title.isHidden())
+        current = window._download_process
+        current.filename_resolved.emit("current.zip")
+        current.process.finish()
+        # New execution resets identity even with the same input.
+        window.set_state(GuiState.READY)
+        window.on_download_intent()
+        self.assertIsNone(window._runtime_filename)
+        self.assertTrue(window.media_title.isHidden())
+        window._download_process.filename_resolved.emit("next.zip")
+        window._download_process.process.finish()
+        window.input_field.clear()
+        self.assertIsNone(window._runtime_filename)
+        self.assertEqual(window.current_state, GuiState.EMPTY)
+
     def test_exit_status_success_failure_and_crash(self):
         for code, status, expected, message in (
             (0, QProcess.ExitStatus.NormalExit, GuiState.COMPLETE, "Download complete"),

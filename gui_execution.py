@@ -12,6 +12,7 @@ from status_event import StatusEvent, StatusKind, StatusReason
 class DirectDownloadProcess(QObject):
     status_event = Signal(object)  # Payload: shared, Qt-independent StatusEvent.
     progress_event = Signal(object)  # Payload: Qt-independent ProgressEvent.
+    filename_resolved = Signal(str)  # Runtime identity, separate from telemetry/status.
     finished = Signal(bool)
     MAX_STDERR_BYTES = 65536
 
@@ -25,7 +26,8 @@ class DirectDownloadProcess(QObject):
         self.done = False
         self.closing = False
         self.stderr_tail = b""
-        self._progress_parser = Aria2ProgressParser()
+        self._runtime_filename = None
+        self._progress_parser = Aria2ProgressParser(self.on_filename)
         self.process = QProcess(self)
         self.process.setStandardInputFile(QProcess.nullDevice())
         self.process.started.connect(self.on_started)
@@ -59,6 +61,11 @@ class DirectDownloadProcess(QObject):
     def on_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
             self.complete(False, StatusReason.START_FAILED)
+
+    def on_filename(self, filename):
+        if not self.done and not self.closing and filename != self._runtime_filename:
+            self._runtime_filename = filename
+            self.filename_resolved.emit(filename)
 
     def on_finished(self, code, status):
         self.drain_output()

@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 import aria2_progress
-from aria2_progress import Aria2ProgressParser, parse_aria2_progress
+from aria2_progress import Aria2ProgressParser, parse_aria2_progress, parse_aria2_filename
 from gui_progress import format_bytes, format_eta, format_statistics
 import progress_event
 from progress_event import ProgressEvent
@@ -18,6 +18,34 @@ RECORD = b"[#6c63db 278528B/1048576B(26%) CN:1 DL:325383B ETA:2s]"
 
 
 class ProgressTests(unittest.TestCase):
+    def test_runtime_filename_records(self):
+        for name in ("example.zip", "My File (2026).zip", "日本語 café.zip", "<b>name</b>.zip", " trailing .zip "):
+            # Slash characters are path separators, even in markup-like names.
+            expected = Path(name).name
+            self.assertEqual(parse_aria2_filename("FILE: /tmp/" + name), expected)
+        for line in ("FILE:", "FILE: ", "FILE: /", "FILE: /tmp/", "FILE: /tmp/..",
+                     "FILE: relative.zip", "FILE: /tmp/a\x00b", "FILE: /tmp/a\nb",
+                     "warning FILE: /tmp/file.zip", "6c63db|OK|234KiB/s|/tmp/file.zip"):
+            self.assertIsNone(parse_aria2_filename(line), line)
+
+    def test_runtime_filename_framing_and_capture(self):
+        names = []
+        events = Aria2ProgressParser(names.append).feed((FIXTURES / "exact.txt").read_bytes(), final=True)
+        self.assertEqual(names, ["exact.zip"] * 4)
+        self.assertEqual(len(events), 8)
+        record = "FILE: /tmp/日本語 café.zip\r\n".encode()
+        for split in range(len(record) + 1):
+            names = []
+            parser = Aria2ProgressParser(names.append)
+            self.assertEqual(parser.feed(record[:split]) + parser.feed(record[split:]), [])
+            self.assertEqual(names, ["日本語 café.zip"])
+        names = []
+        parser = Aria2ProgressParser(names.append)
+        parser.feed(b"FILE: /tmp/" + b"x" * 5000 + b"\nFILE: /tmp/final.zip", final=True)
+        self.assertEqual(names, ["final.zip"])
+        parser.feed(b"FILE: /tmp/invalid-\xff.zip\n")
+        self.assertEqual(len(names), 2)  # Invalid encoding is replaced, never fatal.
+
     def test_model_and_parser_import_without_qt(self):
         original = builtins.__import__
 

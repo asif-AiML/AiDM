@@ -788,6 +788,21 @@ result message. The last real ProgressEvent remains unchanged internally; no
 ProgressEvent and GuiState retain their separate responsibilities. Abort remains
 hidden and disabled until Milestone 14; no execution behavior changes here.
 
+## Milestone 13.1 direct runtime filename
+
+DIRECT_SINGLE still has no pre-download title or URL-derived filename. During
+execution, explicit aria2c `FILE: /path/name.ext` records supply the resolved
+basename through `DirectDownloadProcess.filename_resolved`. The existing bounded
+CR/LF stdout framing handles split records; complete lines use the filesystem
+encoding with replacement for invalid bytes. Repeated names are suppressed by
+the adapter. Completion tables are not a filename source.
+
+The active plain-text title area prefers a genuine inspection title, then the
+runtime direct filename, otherwise stays hidden. No filename is added to
+ProgressEvent or StatusEvent. Input changes, new execution and development resets
+clear runtime identity; stale/non-active process signals are ignored. Terminal
+presentation remains unchanged, with the runtime name retained only internally.
+
 ---
 
 # 18. Torrent UI scope

@@ -6,7 +6,10 @@ The /0B unknown-total sentinel becomes None. Percent is never manufactured.
 """
 
 from decimal import Decimal
+from collections.abc import Callable
+import os.path
 import re
+import sys
 
 from progress_event import ProgressEvent
 
@@ -51,14 +54,26 @@ def parse_aria2_progress(line: str) -> ProgressEvent | None:
         return None
 
 
+def parse_aria2_filename(line: str) -> str | None:
+    """Accept explicit runtime FILE records, never URLs or completion tables."""
+    if not line.startswith("FILE: ") or len(line) > Aria2ProgressParser.MAX_RECORD_BYTES:
+        return None
+    path = line[len("FILE: "):]
+    if not os.path.isabs(path) or any(ord(char) < 32 or ord(char) == 127 for char in path):
+        return None
+    name = os.path.basename(path)
+    return name if name and name not in {".", ".."} else None
+
+
 class Aria2ProgressParser:
     """Bounded CR/LF framing across arbitrary stdout reads, including final tails."""
 
     MAX_RECORD_BYTES = 4096
 
-    def __init__(self):
+    def __init__(self, on_filename: Callable[[str], None] | None = None):
         self._buffer = b""
         self._discarding = False
+        self._on_filename = on_filename
 
     def feed(self, chunk: bytes, *, final: bool = False) -> list[ProgressEvent]:
         events = []
@@ -72,7 +87,13 @@ class Aria2ProgressParser:
                     self._buffer += part
             if index < len(parts) - 1 or final:
                 if not self._discarding:
-                    event = parse_aria2_progress(self._buffer.decode("ascii", errors="replace"))
+                    # Decode only complete records, including split multibyte names.
+                    line = self._buffer.decode(sys.getfilesystemencoding(), errors="replace")
+                    if self._on_filename is not None:
+                        filename = parse_aria2_filename(line)
+                        if filename is not None:
+                            self._on_filename(filename)
+                    event = parse_aria2_progress(line)
                     if event is not None:
                         events.append(event)
                 self._buffer = b""
