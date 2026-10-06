@@ -19,7 +19,7 @@ except ImportError:
 from aidm_gui import AiDMWindow, GuiState, render_status
 from download_job import BulkMode, DownloadJob, YouTubeMode
 from downloader import build_direct_command
-from gui_execution import DirectDownloadProcess
+from gui_execution import DirectDownloadProcess, DownloadProcess, ExecutionOutcome
 from inspection import InputKind, InspectionResult
 from stream_parser import StreamInput
 from status_event import StatusEvent, StatusKind, StatusReason
@@ -148,7 +148,7 @@ class GuiExecutionTests(unittest.TestCase):
             worker.finished.connect(lambda success: sequence.append(("finished", success)))
             return worker
 
-        with patch("aidm_gui.DirectDownloadProcess", side_effect=create):
+        with patch("aidm_gui.create_download_process", side_effect=create):
             self.window.on_download_intent()
         return self.window._download_process.process, events, sequence
 
@@ -162,7 +162,7 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertTrue(self.window.result_message.isHidden())
         process.finish()
         self.assertEqual(sequence, [StatusKind.STARTING_ENGINE, StatusKind.DOWNLOADING,
-                                    StatusKind.COMPLETE, ("finished", True)])
+                                    StatusKind.COMPLETE, ("finished", ExecutionOutcome.COMPLETE)])
         self.assertTrue(all(isinstance(event, StatusEvent) and event.engine == "aria2c" for event in events))
         self.assertEqual(self.window._download_event, events[-1])
         self.assertEqual(self.window.result_message.text(), "Download complete")
@@ -178,7 +178,7 @@ class GuiExecutionTests(unittest.TestCase):
             if failed_start:
                 process.current_state = QProcess.ProcessState.NotRunning
                 process.errorOccurred.emit(QProcess.ProcessError.FailedToStart)
-                expected = [StatusKind.STARTING_ENGINE, StatusKind.FAILED, ("finished", False)]
+                expected = [StatusKind.STARTING_ENGINE, StatusKind.FAILED, ("finished", ExecutionOutcome.FAILED)]
                 reason = StatusReason.START_FAILED
                 message = "Could not start aria2c."
             else:
@@ -186,7 +186,7 @@ class GuiExecutionTests(unittest.TestCase):
                 process.stderr = b"raw diagnostic not part of the event"
                 process.finish(7)
                 expected = [StatusKind.STARTING_ENGINE, StatusKind.DOWNLOADING,
-                            StatusKind.FAILED, ("finished", False)]
+                            StatusKind.FAILED, ("finished", ExecutionOutcome.FAILED)]
                 reason = None
                 message = "Download failed"
                 self.assertIn(b"raw diagnostic", self.window._download_process.stderr_tail)
@@ -327,7 +327,7 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertEqual(window.active_status.text(), "Starting aria2c…")
         self.assertFalse(window.input_field.isEnabled())
         self.assertFalse(window.browse_button.isEnabled())
-        for control in (window.download_button, window.progress, window.abort_button):
+        for control in (window.download_button, window.progress, window.retry_button):
             self.assertTrue(control.isHidden())
         window.preview_state(GuiState.EMPTY)
         window.update_configuration()
@@ -348,10 +348,11 @@ class GuiExecutionTests(unittest.TestCase):
         self.app.processEvents()
         for control in (window.input_field, window.destination_section,
                         window.download_button, window.mode_options, window.bulk_options,
-                        window.quality_options, window.abort_button,
+                        window.quality_options, window.retry_button,
                         window.progress, window.statistics, window.media_title):
             self.assertTrue(control.isHidden())
-        self.assertFalse(window.abort_button.isEnabled())
+        self.assertTrue(window.abort_button.isEnabled())
+        self.assertFalse(window.abort_button.isHidden())
         self.assertFalse(window.browse_button.isVisible())
         self.assertFalse(window.classification.isHidden())
         self.assertEqual(window.classification.text(), "● Direct download")
@@ -561,6 +562,220 @@ class GuiExecutionTests(unittest.TestCase):
             # Close before the started signal is delivered, too.
             self.window.close()
             self.assertEqual(process.state(), QProcess.ProcessState.NotRunning)
+
+    def test_abort_async_once_then_retry_same_snapshot_and_stale_signals(self):
+        process = self.start()
+        window = self.window
+        old = window._download_process
+        job = old.job
+        process.begin()
+        old.progress_event.emit(ProgressEvent(63, 630, 1000))
+        old.filename_resolved.emit("partial.zip")
+        process.stop_on_terminate = False
+        self.assertTrue(window.abort_button.isVisible())
+        self.assertTrue(window.retry_button.isHidden())
+        window.abort_button.click()
+        window.abort_button.click()
+        window.abort_download()
+        self.assertEqual(process.calls.count("terminate"), 1)
+        self.assertFalse(any(isinstance(call, tuple) and call[0] == "wait" for call in process.calls))
+        self.assertEqual(window.active_status.text(), "Aborting…")
+        self.assertFalse(window.abort_button.isEnabled())
+        self.assertEqual(window.current_state, GuiState.DOWNLOADING)
+        old.progress_event.emit(ProgressEvent(70))
+        old.filename_resolved.emit("late.zip")
+        self.assertEqual(window._progress_event.percent, 63)
+        self.assertEqual(window._runtime_filename, "partial.zip")
+        process.stdout = b"[#abcdef 700B/1000B(70%) CN:1]\nFILE: /tmp/late.zip\n"
+        process.readyReadStandardOutput.emit()
+        self.assertEqual(window._progress_event.percent, 63)
+        process.finish(9, QProcess.ExitStatus.CrashExit)
+        self.assertEqual(window.current_state, GuiState.ABORTED)
+        self.assertEqual(window.result_message.text(), "Download aborted")
+        self.assertTrue(window.abort_button.isHidden())
+        self.assertTrue(window.progress.isHidden())
+        self.assertTrue(window.retry_button.isVisible())
+        self.assertFalse(old._abort_timer.isActive())
+        old.escalate_abort()
+        self.assertNotIn("kill", process.calls)
+        # Retry cannot rebuild from mutable configuration or reclassify input.
+        window.destination = "/not-the-job-folder"
+        window.download_job = None
+        with patch("aidm_gui.build_download_job", side_effect=AssertionError("Retry rebuilt job")), \
+             patch("aidm_gui.classify_input", side_effect=AssertionError("Retry classified")):
+            window.retry_button.click()
+        new = window._download_process
+        self.assertIsNot(new, old)
+        self.assertIs(new.job, job)
+        self.assertEqual(new.job.destination, str(self.directory))
+        self.assertIn("--continue=true", new.process.calls[0][1])
+        self.assertIn("--dir=" + job.destination, new.process.calls[0][1])
+        self.assertIsNone(window._progress_event)
+        self.assertIsNone(window._runtime_filename)
+        self.assertEqual(window._download_event.kind, StatusKind.STARTING_ENGINE)
+        self.assertTrue(window.result_message.isHidden())
+        old.status_event.emit(StatusEvent(StatusKind.FAILED))
+        old.progress_event.emit(ProgressEvent(99))
+        old.filename_resolved.emit("stale.zip")
+        old.finished.emit(ExecutionOutcome.FAILED)
+        self.assertEqual(window.current_state, GuiState.DOWNLOADING)
+        self.assertEqual(window._download_event.kind, StatusKind.STARTING_ENGINE)
+        self.assertIsNone(window._progress_event)
+        self.assertIsNone(window._runtime_filename)
+        new.progress_event.emit(ProgressEvent(64))
+        self.assertEqual(window.progress.value(), 64)
+
+    def test_abort_grace_timer_and_finish_races(self):
+        process = self.start()
+        process.begin()
+        worker = self.window._download_process
+        process.stop_on_terminate = False
+        worker._abort_timer.setInterval(20)
+        self.window.abort_button.click()
+        self.wait_for(lambda: self.window.current_state == GuiState.ABORTED)
+        self.assertEqual(process.calls[-2:], ["terminate", "kill"])
+        self.assertFalse(worker._abort_timer.isActive())
+        # User abort wins even if a normal zero exit races the request.
+        self.window.retry_button.click()
+        worker = self.window._download_process
+        worker.process.stop_on_terminate = False
+        worker.abort()
+        worker.process.finish(0)
+        self.assertEqual(self.window.current_state, GuiState.ABORTED)
+        worker.escalate_abort()
+        self.assertNotIn("kill", worker.process.calls)
+
+    def test_abort_while_starting_and_failed_to_start_stays_failed(self):
+        process = self.start()
+        process.stop_on_terminate = False
+        worker = self.window._download_process
+        worker.abort()
+        process.begin()
+        self.assertEqual(self.window.active_status.text(), "Aborting…")
+        self.assertEqual(process.calls.count("terminate"), 2)
+        process.current_state = QProcess.ProcessState.NotRunning
+        process.errorOccurred.emit(QProcess.ProcessError.FailedToStart)
+        self.assertEqual(self.window.current_state, GuiState.FAILED)
+        self.assertEqual(self.window.result_message.text(), "Could not start aria2c.")
+        self.assertFalse(worker._abort_timer.isActive())
+        self.assertTrue(self.window.retry_button.isVisible())
+
+    def test_failure_retry_success_and_partial_files_untouched(self):
+        partial = self.directory / "partial.zip"
+        control = self.directory / "partial.zip.aria2"
+        partial.write_bytes(b"partial fixture")
+        control.write_bytes(b"resume fixture")
+        process = self.start()
+        process.finish(7)
+        self.assertTrue(self.window.retry_button.isVisible())
+        self.window.retry_button.click()
+        self.window.abort_button.click()
+        self.assertEqual(self.window.current_state, GuiState.ABORTED)
+        self.window.retry_button.click()
+        self.window._download_process.process.finish()
+        self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+        self.assertTrue(self.window.retry_button.isHidden())
+        self.assertTrue(self.window.abort_button.isHidden())
+        self.assertEqual(partial.read_bytes(), b"partial fixture")
+        self.assertEqual(control.read_bytes(), b"resume fixture")
+
+    def test_retry_destination_missing_and_input_edit_discards_retry(self):
+        folder = self.directory / "destination"
+        folder.mkdir()
+        self.window.destination = str(folder)
+        process = self.start()
+        process.finish(7)
+        old = self.window._download_process
+        folder.rmdir()
+        with patch("aidm_gui.create_download_process") as factory:
+            self.window.retry_button.click()
+            factory.assert_not_called()
+        self.assertIs(self.window._download_process, old)
+        self.assertEqual(self.window.current_state, GuiState.FAILED)
+        self.assertEqual(self.window.result_message.text(),
+                         "Download folder is unavailable — choose another folder.")
+        self.window.input_field.clear()
+        self.assertIsNone(self.window._retry_job)
+        self.assertTrue(self.window.retry_button.isHidden())
+
+    def test_close_during_abort_cancels_escalation_and_reaps(self):
+        process = self.start()
+        process.stop_on_terminate = False
+        worker = self.window._download_process
+        outcomes = []
+        worker.finished.connect(outcomes.append)
+        worker.abort()
+        self.window.close()
+        self.assertEqual(process.state(), QProcess.ProcessState.NotRunning)
+        self.assertFalse(worker._abort_timer.isActive())
+        self.assertEqual(outcomes, [])
+        calls = list(process.calls)
+        worker.escalate_abort()
+        self.assertEqual(process.calls, calls)
+
+    def test_route_neutral_adapter_contract_and_capabilities(self):
+        class FixtureProcess(DownloadProcess):
+            engine = "fixture"
+
+            def build_command(self):
+                return ["fixture-engine"]
+
+        attempts = []
+
+        def factory(job, parent):
+            adapter = FixtureProcess(job, parent)
+            attempts.append(adapter)
+            return adapter
+
+        self.inspect(InputKind.HLS)
+        with patch("aidm_gui.create_download_process", side_effect=factory):
+            self.window.on_download_intent()
+            worker = attempts[0]
+            worker.process.begin()
+            self.assertEqual(self.window.active_status.text(), "Downloading…")
+            worker.progress_event.emit(ProgressEvent(23))
+            self.assertEqual(self.window.progress.value(), 23)
+            self.window.abort_button.click()
+            self.assertEqual(self.window.current_state, GuiState.ABORTED)
+            self.window.retry_button.click()
+            self.assertEqual(len(attempts), 2)
+            self.assertIs(attempts[0].job, attempts[1].job)
+            self.assertIsNot(attempts[0], attempts[1])
+            self.assertEqual(self.window.current_state, GuiState.DOWNLOADING)
+            attempts[1].can_abort = False
+            attempts[1].can_retry = False
+            self.window._retry_job = None
+            self.window.set_state(GuiState.DOWNLOADING)
+            self.assertTrue(self.window.abort_button.isHidden())
+            attempts[1].process.finish(7)
+            self.assertTrue(self.window.retry_button.isHidden())
+
+    def test_enter_never_aborts_or_retries(self):
+        process = self.start()
+        QTest.keyClick(self.window, Qt.Key.Key_Return)
+        self.assertNotIn("terminate", process.calls)
+        process.finish(7)
+        old = self.window._download_process
+        QTest.keyClick(self.window, Qt.Key.Key_Return)
+        self.assertIs(self.window._download_process, old)
+
+    def test_real_abort_is_responsive_and_kill_is_reaped(self):
+        self.process_patch.stop()
+        script = "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',file=__import__('sys').stderr,flush=True); time.sleep(30)"
+        ticks = []
+        timer = QTimer(self.window)
+        timer.setInterval(10)
+        timer.timeout.connect(lambda: ticks.append(True))
+        with patch("gui_execution.build_direct_command", return_value=[sys.executable, "-B", "-c", script]):
+            self.start()
+            worker = self.window._download_process
+            self.wait_for(lambda: b"ready" in worker.stderr_tail)
+            worker._abort_timer.setInterval(150)
+            timer.start()
+            self.window.abort_button.click()
+            self.wait_for(lambda: self.window.current_state == GuiState.ABORTED)
+            self.assertGreater(len(ticks), 2)
+            self.assertEqual(worker.process.state(), QProcess.ProcessState.NotRunning)
 
     def test_real_local_process_event_loop_and_close_cleanup(self):
         # Local Python fixtures only; no aria2c, network or media output.

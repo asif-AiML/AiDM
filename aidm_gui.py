@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from download_job import DownloadJob, YouTubeMode, BulkMode, VideoQuality, build_download_job
 from gui_input import validate_gui_input
-from gui_execution import DirectDownloadProcess
+from gui_execution import create_download_process, ExecutionOutcome, UnsupportedExecution
 from gui_metadata import MetadataProcess
 from gui_quality import QualityProcess
 from gui_progress import format_statistics
@@ -49,6 +49,8 @@ def render_status(event: StatusEvent) -> str:
         StatusKind.DOWNLOADING: "Downloading…",
         StatusKind.COMPLETE: "Download complete",
         StatusKind.FAILED: "Download failed",
+        StatusKind.ABORTING: "Aborting…",
+        StatusKind.ABORTED: "Download aborted",
     }[event.kind]
 
 
@@ -94,6 +96,7 @@ class GuiState(Enum):
     DOWNLOADING = auto()
     COMPLETE = auto()
     FAILED = auto()
+    ABORTED = auto()
 
 
 def existing_destination(value) -> str | None:
@@ -214,6 +217,9 @@ class AiDMWindow(QMainWindow):
         self.active_status.setWordWrap(True)
         self.active_status.setAccessibleName("Current activity")
         self.abort_button = QPushButton("Abort")
+        self.abort_button.clicked.connect(self.abort_download)
+        self.retry_button = QPushButton("Retry")
+        self.retry_button.clicked.connect(self.retry_download)
         self.result_message = QLabel()
 
         for widget in (
@@ -228,10 +234,14 @@ class AiDMWindow(QMainWindow):
             self.statistics,
             self.active_status,
             self.download_button,
-            self.abort_button,
             self.result_message,
+            self.abort_button,
+            self.retry_button,
         ):
-            layout.addWidget(widget)
+            if widget in (self.abort_button, self.retry_button):
+                layout.addWidget(widget, alignment=Qt.AlignmentFlag.AlignRight)
+            else:
+                layout.addWidget(widget)
         layout.addStretch()
 
         self.setCentralWidget(content)
@@ -247,6 +257,8 @@ class AiDMWindow(QMainWindow):
         self._configuration_error = ""
         self._execution_deferred = False
         self._download_process = None
+        self._retry_job = None
+        self._retry_error = ""
         self._download_event: StatusEvent | None = None
         self._progress_event: ProgressEvent | None = None
         self._runtime_filename: str | None = None
@@ -367,59 +379,83 @@ class AiDMWindow(QMainWindow):
             return
         self.update_configuration()
         if self.download_job is not None:
-            if self.download_job.kind == InputKind.DIRECT_SINGLE:
-                self.start_direct_download()
-            else:
-                self._execution_deferred = True
-                self.set_state(GuiState.READY)
+            self.start_download(self.download_job)
 
     def download_active(self):
         return self._download_process is not None and self._download_process.active
 
-    def start_direct_download(self):
-        job = self.download_job
-        if self.download_active() or job is None or job.kind != InputKind.DIRECT_SINGLE:
+    def start_download(self, job, *, retry=False):
+        if self.download_active() or job is None:
             return
-        # Revalidate the exact immutable snapshot; never redirect a real job.
         if existing_destination(job.destination) is None:
-            self._configuration_error = "Download folder is unavailable — choose another folder."
+            message = "Download folder is unavailable — choose another folder."
+            if retry:
+                self._retry_error = message
+                self.set_state(self.current_state)
+            else:
+                self._configuration_error = message
+                self.set_state(GuiState.READY)
+            return
+        try:
+            process = create_download_process(job, self)
+        except UnsupportedExecution:
+            self._execution_deferred = True
             self.set_state(GuiState.READY)
             return
         if self._download_process is not None:
             self._download_process.deleteLater()
-        self._download_process = DirectDownloadProcess(job, self)
-        self._download_process.status_event.connect(self.on_download_status)
-        self._download_process.progress_event.connect(self.on_download_progress)
-        self._download_process.filename_resolved.connect(self.on_filename_resolved)
-        self._download_process.finished.connect(self.on_download_finished)
+        self._download_process = process
+        self._retry_job = job if process.can_retry else None
+        self._retry_error = ""
+        process.status_event.connect(self.on_download_status)
+        process.progress_event.connect(self.on_download_progress)
+        process.filename_resolved.connect(self.on_filename_resolved)
+        process.finished.connect(self.on_download_finished)
         self._download_event = None
         self._progress_event = None
         self._runtime_filename = None
         self.set_state(GuiState.DOWNLOADING)
-        self._download_process.start()
+        process.start()
+
+    def abort_download(self):
+        process = self._download_process
+        if (self.download_active() and process.can_abort
+                and not process.abort_requested):
+            process.abort()
+
+    def retry_download(self):
+        if (self.current_state in {GuiState.FAILED, GuiState.ABORTED}
+                and self._retry_job is not None and not self.download_active()):
+            self.start_download(self._retry_job, retry=True)
 
     @Slot(object)
     def on_download_status(self, event: StatusEvent):
-        if not self._closing:
+        if (not self._closing and self.sender() is self._download_process
+                and self.current_state == GuiState.DOWNLOADING):
             self._download_event = event
             self.set_state(self.current_state)
 
-    @Slot(bool)
-    def on_download_finished(self, success):
-        if not self._closing:
-            self.set_state(GuiState.COMPLETE if success else GuiState.FAILED)
+    @Slot(object)
+    def on_download_finished(self, outcome):
+        if (not self._closing and self.sender() is self._download_process
+                and self.current_state == GuiState.DOWNLOADING):
+            self.set_state({ExecutionOutcome.COMPLETE: GuiState.COMPLETE,
+                            ExecutionOutcome.FAILED: GuiState.FAILED,
+                            ExecutionOutcome.ABORTED: GuiState.ABORTED}[outcome])
 
     @Slot(object)
     def on_download_progress(self, event: ProgressEvent):
         if (not self._closing and self.current_state == GuiState.DOWNLOADING
-                and self.sender() is self._download_process):
+                and self.sender() is self._download_process
+                and not self._download_process.abort_requested):
             self._progress_event = event
             self.set_state(self.current_state)
 
     @Slot(str)
     def on_filename_resolved(self, filename: str):
         if (not self._closing and self.current_state == GuiState.DOWNLOADING
-                and self.sender() is self._download_process):
+                and self.sender() is self._download_process
+                and not self._download_process.abort_requested):
             self._runtime_filename = filename
             self.set_state(self.current_state)
 
@@ -508,6 +544,8 @@ class AiDMWindow(QMainWindow):
     def on_input_changed(self, text: str) -> None:
         if self.download_active():
             return
+        self._retry_job = None
+        self._retry_error = ""
         self._download_event = None
         self._progress_event = None
         self._runtime_filename = None
@@ -595,6 +633,8 @@ class AiDMWindow(QMainWindow):
     def preview_state(self, state: GuiState) -> None:
         if self.download_active():
             return
+        self._retry_job = None
+        self._retry_error = ""
         self._download_event = None
         self._progress_event = None
         self._runtime_filename = None
@@ -631,6 +671,7 @@ class AiDMWindow(QMainWindow):
             GuiState.DOWNLOADING,
             GuiState.COMPLETE,
             GuiState.FAILED,
+            GuiState.ABORTED,
         }
         downloading = state == GuiState.DOWNLOADING
 
@@ -712,15 +753,21 @@ class AiDMWindow(QMainWindow):
             state == GuiState.INSPECTING or downloading
             or (state in {GuiState.NEEDS_OPTIONS, GuiState.READY} and bool(status))
         )
-        self.abort_button.setVisible(False)
-        self.abort_button.setEnabled(False)
-        self.result_message.setText(download_status or {
+        process = self._download_process
+        abort_visible = downloading and self.download_active() and process.can_abort
+        self.abort_button.setVisible(abort_visible)
+        self.abort_button.setEnabled(abort_visible and not process.abort_requested)
+        self.retry_button.setVisible(
+            state in {GuiState.FAILED, GuiState.ABORTED} and self._retry_job is not None
+        )
+        self.result_message.setText(self._retry_error or download_status or {
             GuiState.COMPLETE: "Download complete (state preview)",
             GuiState.FAILED: "Download failed (state preview)",
+            GuiState.ABORTED: "Download aborted (state preview)",
         }.get(state, ""))
-        self.result_message.setVisible(state in {GuiState.COMPLETE, GuiState.FAILED})
+        self.result_message.setVisible(state in {GuiState.COMPLETE, GuiState.FAILED, GuiState.ABORTED})
         if previous_state != state and state in {
-            GuiState.DOWNLOADING, GuiState.COMPLETE, GuiState.FAILED,
+            GuiState.DOWNLOADING, GuiState.COMPLETE, GuiState.FAILED, GuiState.ABORTED,
         }:
             # Collapse space left by configuration/telemetry without resizing on
             # every progress update or changing the user's chosen window width.
@@ -730,7 +777,7 @@ class AiDMWindow(QMainWindow):
 
 def enable_state_test_shortcuts(window: AiDMWindow) -> None:
     """Temporary opt-in development preview: F1 through F7 follow enum order."""
-    for number, state in enumerate(GuiState, start=1):
+    for number, state in enumerate(list(GuiState)[:7], start=1):
         shortcut = QShortcut(QKeySequence(f"F{number}"), window)
         shortcut.activated.connect(lambda state=state: window.preview_state(state))
 

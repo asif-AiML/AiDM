@@ -803,6 +803,45 @@ ProgressEvent or StatusEvent. Input changes, new execution and development reset
 clear runtime identity; stale/non-active process signals are ignored. Terminal
 presentation remains unchanged, with the runtime name retained only internally.
 
+## Milestone 14 shared Abort and Retry lifecycle
+
+`DownloadProcess` owns one QProcess attempt, lifecycle signals, capability flags
+(`can_abort`, `can_retry`), termination and cleanup. Engine adapters supply the
+command and stdout interpretation. `create_download_process(job, parent)` is the
+central execution boundary; only DIRECT_SINGLE currently maps to a real adapter.
+Unsupported routes remain deferred. The GUI's start/Abort/Retry flow is route
+neutral, tested with a non-direct fixture adapter as well as aria2's adapter.
+
+Interactive Abort marks intent, emits `StatusKind.ABORTING` ("Aborting…"), disables
+Abort, sends terminate and starts a single-shot 2500 ms grace timer. If still
+active it sends kill; only process finish declares the typed terminal outcome.
+No interactive waitForFinished is used. User abort wins over an exit code, while
+FailedToStart remains FAILED. `ExecutionOutcome` controls GuiState independently
+of status wording: COMPLETE, FAILED or ABORTED. ABORTED displays "Download aborted".
+Telemetry/filename updates are ignored once Abort is requested. Terminal states
+hide active telemetry and Abort. Failed/aborted retryable attempts show Retry;
+success does not. Enter remains Download-only while READY.
+
+Retry keeps the exact immutable attempted DownloadJob, revalidates its destination
+and obtains a fresh adapter from the factory. It does not classify again or read
+mutable configuration. Missing destination blocks retry without redirecting it.
+Each attempt clears status, progress and runtime filename. All process signals
+check sender identity and active GUI state; late old-attempt signals are ignored.
+Input edits/development resets discard retry context. F1–F7 keep their existing
+preview mapping and cannot interrupt an active attempt.
+
+AiDM does not implement resume or inspect, edit, rename or delete partial files
+or `.aria2` state. The direct adapter keeps the same URL/destination and existing
+`--continue=true`; aria2 decides whether reusable state permits resume. A fresh
+attempt may truthfully report a nonzero first percentage.
+
+Close-time cleanup remains bounded terminate/wait/kill/wait, stops the escalation
+timer and suppresses terminal UI signals while closing. If reaping fails, the
+window retains ownership instead of abandoning the process. This common policy
+owns the current QProcess; future multi-process adapters must account for their
+additional children without duplicating the GUI lifecycle. No additional engine
+execution, pause or manual resume is introduced.
+
 ---
 
 # 18. Torrent UI scope

@@ -29,7 +29,8 @@ class StatusEventTests(unittest.TestCase):
             event.engine = "changed"
         self.assertEqual([field.name for field in fields(event)], ["kind", "engine", "reason"])
         self.assertEqual(set(StatusKind), {StatusKind.STARTING_ENGINE, StatusKind.DOWNLOADING,
-                                          StatusKind.COMPLETE, StatusKind.FAILED})
+                                          StatusKind.COMPLETE, StatusKind.FAILED,
+                                          StatusKind.ABORTING, StatusKind.ABORTED})
 
 
 if __name__ == "__main__":

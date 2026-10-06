@@ -9,6 +9,8 @@ class StatusKind(Enum):
     DOWNLOADING = "downloading"
     COMPLETE = "complete"
     FAILED = "failed"
+    ABORTING = "aborting"
+    ABORTED = "aborted"
 
 
 class StatusReason(Enum):
