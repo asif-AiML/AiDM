@@ -767,6 +767,27 @@ development state resets clear the snapshot. Late events from an old process
 are ignored. No user-facing Abort, retry or progress support for other routes
 is included.
 
+## Milestone 13 active-download presentation
+
+`GuiState.DOWNLOADING` replaces configuration with a compact active view:
+heading, classification, genuine title if available, real progress when known,
+compact statistics and current StatusEvent activity. The input is hidden without
+clearing its text; destination, Browse, Download and all secondary options are
+hidden. Existing active-job mutation guards remain in force. DIRECT_SINGLE has
+no guessed title/filename. Missing title or telemetry leaves no placeholder.
+
+The native, text-visible progress bar uses the system palette. Unknown percent
+hides the bar while available statistics and activity remain visible. Statistics
+retain the Milestone 12 formatter and wrap at narrow widths. On entering active
+or terminal states, the window height fits the content without animation; width
+is preserved. Progress updates do not explicitly resize the window.
+
+COMPLETE and FAILED hide active progress/statistics and show the existing clear
+result message. The last real ProgressEvent remains unchanged internally; no
+100% event is manufactured. Input returns for subsequent editing. StatusEvent,
+ProgressEvent and GuiState retain their separate responsibilities. Abort remains
+hidden and disabled until Milestone 14; no execution behavior changes here.
+
 ---
 
 # 18. Torrent UI scope

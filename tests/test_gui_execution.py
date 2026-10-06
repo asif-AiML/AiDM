@@ -1,5 +1,6 @@
 """Offline process-boundary tests, with local child fixtures for Qt lifecycle."""
 import os
+from dataclasses import replace
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -274,8 +275,11 @@ class GuiExecutionTests(unittest.TestCase):
             self.assertEqual(self.window.current_state, GuiState.COMPLETE if code == 0 else GuiState.FAILED)
             self.assertEqual(self.window._progress_event.percent, 89)
             self.assertEqual(self.window.progress.value(), 89)
-            self.assertFalse(self.window.progress.isHidden())
-            self.assertFalse(self.window.statistics.isHidden())
+            self.assertTrue(self.window.progress.isHidden())
+            self.assertTrue(self.window.statistics.isHidden())
+            self.assertFalse(self.window.result_message.isHidden())
+            self.assertTrue(self.window.active_status.isHidden())
+            self.assertFalse(self.window.input_field.isHidden())
         self.window.input_field.clear()
         process = self.start()
         process.finish()
@@ -333,6 +337,53 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertEqual(window.current_state, GuiState.DOWNLOADING)
         process.begin()
         self.assertEqual(window.active_status.text(), "Downloading…")
+
+    def test_active_layout_hides_configuration_and_preserves_identity_and_input(self):
+        self.inspect()
+        window = self.window
+        text = window.input_field.text()
+        job = window.download_job
+        ready_height = window.height()
+        window.on_download_intent()
+        self.app.processEvents()
+        for control in (window.input_field, window.destination_section,
+                        window.download_button, window.mode_options, window.bulk_options,
+                        window.quality_options, window.abort_button,
+                        window.progress, window.statistics, window.media_title):
+            self.assertTrue(control.isHidden())
+        self.assertFalse(window.abort_button.isEnabled())
+        self.assertFalse(window.browse_button.isVisible())
+        self.assertFalse(window.classification.isHidden())
+        self.assertEqual(window.classification.text(), "● Direct download")
+        self.assertFalse(window.active_status.isHidden())
+        self.assertEqual(window.input_field.text(), text)
+        self.assertEqual(window._download_process.job, job)
+        self.assertLess(window.height(), ready_height)
+        self.assertEqual(window.width(), 480)
+        window._download_process.process.finish()
+        self.assertFalse(window.input_field.isHidden())
+        self.assertEqual(window.input_field.text(), text)
+
+    def test_active_layout_known_title_and_statistics_only(self):
+        process = self.start()
+        window = self.window
+        # Presentation fixture only: no new route execution or title discovery.
+        window.inspection_result = replace(window.inspection_result, title="Known media title")
+        process.begin()
+        window._download_process.progress_event.emit(
+            ProgressEvent(downloaded_bytes=124900000, speed_bytes_per_second=181200)
+        )
+        self.app.processEvents()
+        self.assertFalse(window.media_title.isHidden())
+        self.assertEqual(window.media_title.text(), "Known media title")
+        self.assertTrue(window.progress.isHidden())
+        self.assertFalse(window.statistics.isHidden())
+        self.assertEqual(window.statistics.text(), "181.2 KB/s • 124.9 MB downloaded")
+        self.assertFalse(window.active_status.isHidden())
+        self.assertEqual(window.active_status.text(), "Downloading…")
+        self.assertLess(window.classification.y(), window.media_title.y())
+        self.assertLess(window.media_title.y(), window.statistics.y())
+        self.assertLess(window.statistics.y(), window.active_status.y())
 
     def test_exit_status_success_failure_and_crash(self):
         for code, status, expected, message in (

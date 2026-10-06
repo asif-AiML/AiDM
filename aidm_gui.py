@@ -203,12 +203,16 @@ class AiDMWindow(QMainWindow):
         self.progress.setRange(0, 100)
         self.progress.reset()
         self.progress.setTextVisible(True)
+        self.progress.setMinimumHeight(24)
+        self.progress.setAccessibleName("Download progress")
         self.statistics = QLabel()
         self.statistics.setTextFormat(Qt.TextFormat.PlainText)
         self.statistics.setWordWrap(True)
+        self.statistics.setAccessibleName("Download statistics")
         self.active_status = QLabel()
         self.active_status.setTextFormat(Qt.TextFormat.PlainText)
         self.active_status.setWordWrap(True)
+        self.active_status.setAccessibleName("Current activity")
         self.abort_button = QPushButton("Abort")
         self.result_message = QLabel()
 
@@ -607,6 +611,7 @@ class AiDMWindow(QMainWindow):
 
     def set_state(self, state: GuiState) -> None:
         """Apply all state-dependent presentation in one place."""
+        previous_state = getattr(self, "current_state", None)
         self.current_state = state
         has_details = state in {
             GuiState.NEEDS_OPTIONS,
@@ -618,7 +623,7 @@ class AiDMWindow(QMainWindow):
         downloading = state == GuiState.DOWNLOADING
 
         self.heading.setVisible(True)
-        self.input_field.setVisible(True)
+        self.input_field.setVisible(not downloading)
         self.input_field.setEnabled(not downloading)
         self.browse_button.setEnabled(not downloading)
         result = self.inspection_result
@@ -649,7 +654,8 @@ class AiDMWindow(QMainWindow):
         self.download_button.setEnabled(state == GuiState.READY and self.usable_input())
         for shortcut in self._enter_shortcuts:
             shortcut.setEnabled(state == GuiState.READY and self.usable_input())
-        telemetry_visible = state in {GuiState.DOWNLOADING, GuiState.COMPLETE, GuiState.FAILED}
+        # Terminal states retain the real snapshot internally, not on screen.
+        telemetry_visible = downloading
         progress = self._progress_event
         percent = progress.percent if progress else None
         if percent is None:
@@ -699,6 +705,13 @@ class AiDMWindow(QMainWindow):
             GuiState.FAILED: "Download failed (state preview)",
         }.get(state, ""))
         self.result_message.setVisible(state in {GuiState.COMPLETE, GuiState.FAILED})
+        if previous_state != state and state in {
+            GuiState.DOWNLOADING, GuiState.COMPLETE, GuiState.FAILED,
+        }:
+            # Collapse space left by configuration/telemetry without resizing on
+            # every progress update or changing the user's chosen window width.
+            self.centralWidget().layout().activate()
+            self.resize(self.width(), self.sizeHint().height())
 
 
 def enable_state_test_shortcuts(window: AiDMWindow) -> None:
