@@ -293,13 +293,13 @@ class BatchGuiTests(unittest.TestCase):
 
     def test_shared_summary_nouns_and_future_multi_item_terminal_presentation(self):
         for kind, noun in ((InputKind.YOUTUBE_BULK, 'video'),
-                           (InputKind.YOUTUBE_PLAYLIST, 'video'), (InputKind.DIRECT_BULK, 'file')):
+                           (InputKind.DIRECT_BULK, 'file')):
             self.assertEqual(format_batch_summary(kind, 1), f'1 {noun} downloaded')
             self.assertEqual(format_batch_summary(kind, 4), f'4 {noun}s downloaded')
         self.assertEqual(format_batch_summary(InputKind.GENERIC_YTDLP, 4), '4 items downloaded')
         self.assertEqual(format_batch_summary(InputKind.YOUTUBE_PLAYLIST, None), '')
         for kind, count, expected in ((InputKind.DIRECT_BULK, 2, '2 files downloaded'),
-                                      (InputKind.YOUTUBE_PLAYLIST, 4, '4 videos downloaded')):
+                                      (InputKind.YOUTUBE_PLAYLIST, 4, 'YouTube playlist downloaded • 4 videos')):
             self.inspect(kind)
             self.window.inspection_result = replace(self.window.inspection_result, title='Last item', item_count=count)
             self.window.set_state(GuiState.COMPLETE)
@@ -323,7 +323,7 @@ class BatchGuiTests(unittest.TestCase):
         self.assertTrue(self.window.queue_position.isHidden())
 
     def test_other_routes_stay_deferred(self):
-        for kind in (InputKind.YOUTUBE_PLAYLIST, InputKind.DIRECT_BULK, InputKind.HLS,
+        for kind in (InputKind.DIRECT_BULK, InputKind.HLS,
                      InputKind.DASH, InputKind.GENERIC_YTDLP, InputKind.STREAM_INSPECTOR, InputKind.TORRENT):
             extra = {}
             urls = ('first',)

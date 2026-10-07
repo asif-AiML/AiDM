@@ -41,9 +41,11 @@ from batch_event import BatchEvent
 
 
 def format_batch_summary(kind: InputKind, count: int | None) -> str:
-    """Presentation only: use the job/inspection count, never queue telemetry."""
+    """Presentation only: caller supplies the known collection or URL-list size."""
     if count is None:
         return ""
+    if kind == InputKind.YOUTUBE_PLAYLIST:
+        return f"YouTube playlist downloaded • {count} video{'' if count == 1 else 's'}"
     noun = {
         InputKind.YOUTUBE_BULK: "video",
         InputKind.YOUTUBE_PLAYLIST: "video",
@@ -206,6 +208,15 @@ class AiDMWindow(QMainWindow):
 
         self.classification = QLabel("Classification placeholder")
         self.classification.setWordWrap(True)
+        self.job_title = JobTitleLabel()
+        self.job_title.setTextFormat(Qt.TextFormat.PlainText)
+        self.job_title.setWordWrap(True)
+        self.job_title.setAccessibleName("Job title")
+        primary_font = self.job_title.font()
+        primary_font.setPointSize(16)
+        primary_font.setBold(True)
+        self.job_title.setFont(primary_font)
+        self.job_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.queue_position = QLabel()
         self.queue_position.setTextFormat(Qt.TextFormat.PlainText)
         self.queue_position.setAccessibleName("Current batch position")
@@ -294,6 +305,7 @@ class AiDMWindow(QMainWindow):
 
         for widget in (
             self.classification,
+            self.job_title,
             self.queue_position,
             self.media_title,
             self.batch_summary,
@@ -776,17 +788,28 @@ class AiDMWindow(QMainWindow):
         # The attempted immutable job is authoritative even after failure/abort.
         job = self._download_process.job if self._download_process and self._download_event else None
         identity_kind = job.kind if job else result.route if result else None
+        # Collection identity stays stable; media_title remains the current item
+        # slot shared with ordinary bulk. Never write item titles into inspection.
+        collection_identity = identity_kind == InputKind.YOUTUBE_PLAYLIST
+        primary_title = (job.title if job else title) if collection_identity else None
+        self.job_title.setAlignment(Qt.AlignmentFlag.AlignCenter if terminal else self._media_title_alignment)
+        self.job_title.set_identity(primary_title or "", True)
+        self.job_title.setVisible(has_details and bool(primary_title))
         bulk_kinds = {InputKind.YOUTUBE_BULK, InputKind.DIRECT_BULK}
         terminal_batch = terminal and (
             identity_kind in bulk_kinds | {InputKind.YOUTUBE_PLAYLIST} or batch is not None
         )
         summary_count = result.item_count if result else None
+        if collection_identity and job:
+            summary_count = job.item_count or (batch.total_items if batch else None)
         if identity_kind in bulk_kinds:
             summary_count = len(job.urls) if job else len(result.urls) if result else None
         summary = format_batch_summary(identity_kind, summary_count) if terminal_batch and state == GuiState.COMPLETE else ""
         self.batch_summary.setText(summary)
         self.batch_summary.setVisible(bool(summary))
-        if batch is not None:
+        if collection_identity:
+            title = batch.title if batch is not None and downloading else None
+        elif batch is not None:
             # Runtime item identity replaces generic/first-item inspection data.
             title = batch.title
         elif not title and (downloading or terminal):
@@ -796,23 +819,26 @@ class AiDMWindow(QMainWindow):
         title_font = QFont(self._media_title_font)
         if batch is not None:
             title_font.setBold(True)
+        if collection_identity:
+            title_font.setPointSize(13)
+            title_font.setBold(True)
         if terminal:
             title_font.setPointSize(13)
             title_font.setBold(True)
         self.media_title.setFont(title_font)
         self.media_title.setAlignment(Qt.AlignmentFlag.AlignCenter if terminal else self._media_title_alignment)
         title_policy = QSizePolicy(
-            QSizePolicy.Policy.Ignored if terminal else QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Ignored if terminal or collection_identity else QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Preferred,
         )
         title_policy.setHeightForWidth(True)
         self.media_title.setSizePolicy(title_policy)
-        self.media_title.set_identity(title or "", terminal)
+        self.media_title.set_identity(title or "", terminal or collection_identity)
         self.classification.setVisible(has_details and result is not None)
         self.media_title.setVisible(has_details and bool(title) and not terminal_batch)
         count = result.item_count if result else None
         count_unit = (
-            "videos" if result and result.route == InputKind.YOUTUBE_BULK
+            "videos" if result and result.route in {InputKind.YOUTUBE_BULK, InputKind.YOUTUBE_PLAYLIST}
             else "files" if result and result.route == InputKind.DIRECT_BULK else "items"
         )
         self.item_count.setText(f"{count} {count_unit}" if count is not None else "")
@@ -834,6 +860,8 @@ class AiDMWindow(QMainWindow):
         telemetry_visible = downloading
         progress = self._progress_event
         percent = batch.aggregate_percent if batch is not None else progress.percent if progress else None
+        if collection_identity and batch is None:
+            percent = None  # A stream percent is not a playlist aggregate.
         self.progress.setAccessibleName("Batch progress" if batch else "Download progress")
         self.statistics.setToolTip("Current item/stream statistics" if batch else "")
         if percent is None:

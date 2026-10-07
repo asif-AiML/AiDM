@@ -15,7 +15,7 @@ from downloader import build_direct_command
 from inspection import InputKind
 from status_event import StatusEvent, StatusKind, StatusReason
 from progress_event import ProgressEvent
-from youtube import build_youtube_video_command, build_youtube_audio_command
+from youtube import build_youtube_video_command, build_youtube_audio_command, build_youtube_playlist_command
 from ytdlp_progress import YtDlpProgressParser
 from batch_event import ItemStarted, SequentialBatchProgress
 
@@ -259,21 +259,26 @@ class DirectDownloadProcess(DownloadProcess):
 
 
 class YouTubeDownloadProcess(DownloadProcess):
-    """Single/bulk YouTube modes, with one shared process attempt."""
+    """YouTube modes and video playlists, with one shared process attempt."""
 
     engine = "yt-dlp"
     owns_process_group = True
 
     def __init__(self, job: DownloadJob, parent=None):
-        if job.kind not in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK}:
-            raise ValueError("YouTube GUI execution supports single/bulk only")
+        if job.kind not in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK, InputKind.YOUTUBE_PLAYLIST}:
+            raise ValueError("YouTube GUI execution requires a YouTube job")
         super().__init__(job, parent)
         self._progress_parser = YtDlpProgressParser()
         self._last_status = None
-        self._batch = SequentialBatchProgress(len(job.urls)) if job.kind == InputKind.YOUTUBE_BULK else None
+        total = (len(job.urls) if job.kind == InputKind.YOUTUBE_BULK else
+                 job.item_count if job.kind == InputKind.YOUTUBE_PLAYLIST else None)
+        self._batch = SequentialBatchProgress(total) if total is not None else None
 
     def build_command(self):
         options = dict(destination=self.job.destination, telemetry=True)
+        if self.job.kind == InputKind.YOUTUBE_PLAYLIST:
+            height = None if self.job.video_quality == VideoQuality.BEST else self.job.video_quality
+            return build_youtube_playlist_command(self.job.urls[0], height, **options)
         if self._batch is not None:
             options["total_videos"] = len(self.job.urls)
         if self.job.mode == YouTubeMode.VIDEO:
@@ -287,6 +292,9 @@ class YouTubeDownloadProcess(DownloadProcess):
     def consume_stdout(self, chunk, *, final=False):
         for event in self._progress_parser.feed(chunk, final=final):
             if isinstance(event, ItemStarted):
+                if (self._batch is None and self.job.kind == InputKind.YOUTUBE_PLAYLIST
+                        and event.total_items is not None):
+                    self._batch = SequentialBatchProgress(event.total_items)
                 if self._batch is not None:
                     previous = self._batch.event
                     batch = self._batch.start_item(event)
@@ -323,6 +331,6 @@ def create_download_process(job: DownloadJob, parent=None) -> DownloadProcess:
     """Only implemented adapters belong here; unsupported routes stay deferred."""
     if job.kind == InputKind.DIRECT_SINGLE:
         return DirectDownloadProcess(job, parent)
-    if job.kind in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK}:
+    if job.kind in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK, InputKind.YOUTUBE_PLAYLIST}:
         return YouTubeDownloadProcess(job, parent)
     raise UnsupportedExecution("GUI execution is not implemented for this job")

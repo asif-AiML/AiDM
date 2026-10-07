@@ -18,6 +18,7 @@ DOWNLOAD_PREFIX = "AIDM_PROGRESS:"
 POSTPROCESS_PREFIX = "AIDM_POSTPROCESS:"
 ITEM_PREFIX = "AIDM_ITEM:"
 ITEM_TEMPLATE = "before_dl:" + ITEM_PREFIX + "%(.{video_autonumber,title})j"
+PLAYLIST_ITEM_TEMPLATE = "before_dl:" + ITEM_PREFIX + "%(.{playlist_autonumber,n_entries,title})j"
 DOWNLOAD_TEMPLATE = (
     'download:' + DOWNLOAD_PREFIX + '{"progress":'
     '%(progress.{status,downloaded_bytes,total_bytes,total_bytes_estimate,speed,eta})j,'
@@ -41,6 +42,8 @@ def parse_ytdlp_record(line: str) -> list[StatusEvent | ProgressEvent | ItemStar
             data = json.loads(line[len(ITEM_PREFIX):])
             if not isinstance(data, dict):
                 return []
+            if "playlist_autonumber" in data:
+                return [ItemStarted(data["playlist_autonumber"], data.get("title"), data.get("n_entries"))]
             return [ItemStarted(data.get("video_autonumber"), data.get("title"))]
         if line.startswith(POSTPROCESS_PREFIX):
             data = json.loads(line[len(POSTPROCESS_PREFIX):])

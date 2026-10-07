@@ -995,6 +995,61 @@ FAILED and ABORTED show their existing outcome/Retry group without claiming a
 completed-item count. Single-job terminal title/runtime-filename retention remains
 unchanged. This does not enable playlist or direct-bulk execution.
 
+## Milestone 17 YouTube playlist execution
+
+`YOUTUBE_PLAYLIST` now uses the existing `YouTubeDownloadProcess` and shared
+execution factory. It remains VIDEO-only: the configured maximum height or
+explicit BEST is consumed without rediscovery. CLI and GUI share
+`build_youtube_playlist_command`: existing video format/MP4 merge/remux policy,
+aria2 handoff, `--yes-playlist`, and GUI-only `-P` destination/telemetry options.
+Default CLI commands and interactive quality selection remain unchanged.
+
+The immutable DownloadJob now preserves optional positive `item_count` for a
+collection URL. Inspection's known playlist count is authoritative, never
+`len(job.urls)` (one playlist URL). URL-list bulk continues using its URL count.
+If inspection did not return a count, the first valid runtime `n_entries` may
+initialize batch progress; no count is invented. Until a batch total is known,
+no aggregate bar or completed-count summary is shown.
+
+Playlist `before_dl:AIDM_ITEM` JSON uses `playlist_autonumber` (download queue
+position), `n_entries`, and `title`. The field semantics were verified in the
+installed yt-dlp 2026.08.19 source and by processing an offline three-entry
+playlist with `skip_download`; this is template evidence, not a real YouTube
+transfer. Known snapshot counts are not overwritten by runtime output. Playlist
+changes between inspection and execution can make the snapshot stale; indices
+outside its range are ignored rather than expanding or fabricating the count.
+
+Active identity is now:
+
+```text
+classification
+playlist/job title (16-point bold, stable primary identity)
+current / total (existing 14-point bold queue label)
+current video title (13-point bold, changing secondary identity)
+aggregate progress
+current item/stream statistics
+StatusEvent activity
+Abort
+```
+
+Both identity labels remain plain text, fit the available width, and retain full
+text in tooltips. Current item records never overwrite inspection/job title.
+The existing BatchEvent / SequentialBatchProgress item-weighted formula and
+high-water contribution prevent regressions between video/audio phases. No
+byte-weighted estimates or new lifecycle are introduced.
+
+On COMPLETE, the current video title disappears; playlist title remains above
+the centered bold summary `YouTube playlist downloaded • N videos` (or `1 video`)
+and `Download complete 🎉💫`. FAILED/ABORTED retain playlist title and Retry,
+hide the current video title, and make no completed-count claim. Ordinary bulk
+keeps its single active-title level and `N videos downloaded` terminal summary.
+
+Abort, process-group cleanup, terminal outcomes, stale-attempt guards, and Retry
+are inherited unchanged. Retry creates a fresh adapter for the same immutable
+URL/quality/destination/title/count snapshot. yt-dlp/aria2 own skip/resume behavior;
+AiDM does not delete partials. Direct bulk, HLS/DASH, Stream Inspector and other
+deferred execution routes remain deferred.
+
 ---
 
 # 18. Torrent UI scope

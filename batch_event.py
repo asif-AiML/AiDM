@@ -9,12 +9,17 @@ class ItemStarted:
 
     current_index: int
     title: str | None = None
+    # Runtime collection size, used only if inspection did not know the total.
+    total_items: int | None = None
 
     def __post_init__(self):
         if type(self.current_index) is not int or self.current_index < 1:
             raise ValueError("current_index must be a positive integer")
         if self.title is not None and not isinstance(self.title, str):
             raise ValueError("title must be text or None")
+        if self.total_items is not None and (
+                type(self.total_items) is not int or self.total_items < self.current_index):
+            raise ValueError("total_items must be an integer >= current_index")
 
 
 @dataclass(frozen=True)

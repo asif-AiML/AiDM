@@ -3,7 +3,7 @@ import subprocess
 
 from downloader import ARIA2_DOWNLOADER_ARGUMENTS
 from utils import run_command
-from ytdlp_progress import DOWNLOAD_TEMPLATE, POSTPROCESS_TEMPLATE, ITEM_TEMPLATE
+from ytdlp_progress import DOWNLOAD_TEMPLATE, POSTPROCESS_TEMPLATE, ITEM_TEMPLATE, PLAYLIST_ITEM_TEMPLATE
 
 
 YOUTUBE_VIDEO_FORMAT = (
@@ -209,6 +209,17 @@ def download_youtube_video(urls: list[str], max_height: int | None = None) -> in
     return run_command(command)
 
 
+def build_youtube_playlist_command(
+    url: str, max_height: int | None = None, *,
+    destination: str | None = None, telemetry: bool = False,
+) -> list[str]:
+    """The same video policy, with playlist traversal and optional item records."""
+    command = build_youtube_video_command(max_height, destination=destination, telemetry=telemetry)
+    if telemetry:
+        command.extend(["--print", PLAYLIST_ITEM_TEMPLATE, "--no-quiet", "--progress"])
+    return command + ["--yes-playlist", url]
+
+
 def download_youtube_playlist(url: str) -> int:
     print("Mode: YouTube playlist")
     print("Extractor: yt-dlp")
@@ -228,12 +239,7 @@ def download_youtube_playlist(url: str) -> int:
     if selected_height is not None:
         print(f"Selected quality: {selected_height}p")
 
-    command = build_youtube_video_command(selected_height)
-
-    command.extend([
-        "--yes-playlist",
-        url,
-    ])
+    command = build_youtube_playlist_command(url, selected_height)
 
     result = run_command(command)
 

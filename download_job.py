@@ -38,6 +38,8 @@ class DownloadJob:
     subtitles: tuple[str, ...] = ()
     # Inspector context does not override the mature underlying CLI route.
     route_kind: InputKind | None = None
+    # Known size of a collection URL; URL-list bulk already has len(urls).
+    item_count: int | None = None
 
     def __post_init__(self) -> None:
         # Filesystem availability belongs to the frontend/execution boundary.
@@ -68,6 +70,8 @@ class DownloadJob:
         object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
         if self.title is not None and not isinstance(self.title, str):
             raise ValueError("title must be a string or None")
+        if self.item_count is not None and (type(self.item_count) is not int or self.item_count < 1):
+            raise ValueError("item_count must be a positive integer or None")
 
         if self.kind == InputKind.STREAM_INSPECTOR:
             if self.route_kind not in {
@@ -136,4 +140,5 @@ def build_download_job(
         kind=result.kind, urls=urls, destination=destination, mode=mode, video_quality=video_quality,
         bulk_mode=bulk_mode, title=title, headers=headers, subtitles=subtitles,
         route_kind=result.route_kind,
+        item_count=result.item_count if result.route == InputKind.YOUTUBE_PLAYLIST else None,
     )
