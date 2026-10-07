@@ -3,7 +3,7 @@ import subprocess
 
 from downloader import ARIA2_DOWNLOADER_ARGUMENTS
 from utils import run_command
-from ytdlp_progress import DOWNLOAD_TEMPLATE, POSTPROCESS_TEMPLATE
+from ytdlp_progress import DOWNLOAD_TEMPLATE, POSTPROCESS_TEMPLATE, ITEM_TEMPLATE
 
 
 YOUTUBE_VIDEO_FORMAT = (
@@ -151,6 +151,7 @@ def build_youtube_command(
     if total_videos is not None:
         command.extend([
             "--print",
+            ITEM_TEMPLATE if telemetry else
             f"before_dl:[%(video_autonumber)d/{total_videos}] Starting download: %(title)s",
             "--no-quiet",
             "--progress",

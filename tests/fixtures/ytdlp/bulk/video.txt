@@ -1,0 +1,36 @@
+[generic] Extracting URL: http://127.0.0.1:36209/First.mp4
+[generic] First: Downloading webpage
+[info] First: Downloading 1 format(s): mp4
+AIDM_ITEM:{"video_autonumber": 1, "title": "First"}
+[download] Destination: /tmp/aidm-m16-capture-3zy8xeu_/video/First [First].mp4
+[download] Writing temporary cookies file to "/tmp/tmpqbqw2ubs.cookies"
+AIDM_PROGRESS:{"progress":{"status": "finished", "downloaded_bytes": 88543, "total_bytes": 88543, "speed": 884208.1356920074},"info":{}}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "VideoRemuxer"}
+[VideoRemuxer] Not remuxing media file "/tmp/aidm-m16-capture-3zy8xeu_/video/First [First].mp4"; already is in target format mp4
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "VideoRemuxer"}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "MoveFiles"}
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "MoveFiles"}
+[generic] Extracting URL: http://127.0.0.1:36209/Second.mp4
+[generic] Second: Downloading webpage
+[info] Second: Downloading 1 format(s): mp4
+AIDM_ITEM:{"video_autonumber": 2, "title": "Second"}
+[download] Destination: /tmp/aidm-m16-capture-3zy8xeu_/video/Second [Second].mp4
+[download] Writing temporary cookies file to "/tmp/tmps8a9vst9.cookies"
+AIDM_PROGRESS:{"progress":{"status": "finished", "downloaded_bytes": 88543, "total_bytes": 88543, "speed": 981339.7678668633},"info":{}}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "VideoRemuxer"}
+[VideoRemuxer] Not remuxing media file "/tmp/aidm-m16-capture-3zy8xeu_/video/Second [Second].mp4"; already is in target format mp4
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "VideoRemuxer"}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "MoveFiles"}
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "MoveFiles"}
+[generic] Extracting URL: http://127.0.0.1:36209/Third.mp4
+[generic] Third: Downloading webpage
+[info] Third: Downloading 1 format(s): mp4
+AIDM_ITEM:{"video_autonumber": 3, "title": "Third"}
+[download] Destination: /tmp/aidm-m16-capture-3zy8xeu_/video/Third [Third].mp4
+[download] Writing temporary cookies file to "/tmp/tmppeaoa0kb.cookies"
+AIDM_PROGRESS:{"progress":{"status": "finished", "downloaded_bytes": 88543, "total_bytes": 88543, "speed": 952752.5098500999},"info":{}}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "VideoRemuxer"}
+[VideoRemuxer] Not remuxing media file "/tmp/aidm-m16-capture-3zy8xeu_/video/Third [Third].mp4"; already is in target format mp4
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "VideoRemuxer"}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "MoveFiles"}
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "MoveFiles"}

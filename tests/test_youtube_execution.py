@@ -185,11 +185,9 @@ class YouTubeExecutionTests(unittest.TestCase):
                 worker.process.finish()
         direct = DownloadJob(InputKind.DIRECT_SINGLE, ("https://example.test/file.zip",), str(self.directory))
         self.assertIsInstance(create_download_process(direct), DirectDownloadProcess)
-        for kind in (InputKind.YOUTUBE_BULK, InputKind.YOUTUBE_PLAYLIST, InputKind.HLS,
+        for kind in (InputKind.YOUTUBE_PLAYLIST, InputKind.HLS,
                      InputKind.DASH, InputKind.GENERIC_YTDLP, InputKind.TORRENT):
-            if kind == InputKind.YOUTUBE_BULK:
-                job = DownloadJob(kind, ("a", "b"), str(self.directory), mode=YouTubeMode.WAV)
-            elif kind == InputKind.YOUTUBE_PLAYLIST:
+            if kind == InputKind.YOUTUBE_PLAYLIST:
                 job = DownloadJob(kind, ("a",), str(self.directory), video_quality=720)
             else:
                 job = DownloadJob(kind, ("a",), str(self.directory))

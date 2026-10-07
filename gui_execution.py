@@ -17,6 +17,7 @@ from status_event import StatusEvent, StatusKind, StatusReason
 from progress_event import ProgressEvent
 from youtube import build_youtube_video_command, build_youtube_audio_command
 from ytdlp_progress import YtDlpProgressParser
+from batch_event import ItemStarted, SequentialBatchProgress
 
 
 class ExecutionOutcome(Enum):
@@ -34,6 +35,7 @@ class DownloadProcess(QObject):
 
     status_event = Signal(object)
     progress_event = Signal(object)
+    batch_event = Signal(object)
     filename_resolved = Signal(str)
     finished = Signal(object)  # ExecutionOutcome, independent of presentation.
     can_abort = True
@@ -257,31 +259,48 @@ class DirectDownloadProcess(DownloadProcess):
 
 
 class YouTubeDownloadProcess(DownloadProcess):
-    """Single YouTube modes; shared builders and lifecycle own all mechanics."""
+    """Single/bulk YouTube modes, with one shared process attempt."""
 
     engine = "yt-dlp"
     owns_process_group = True
 
     def __init__(self, job: DownloadJob, parent=None):
-        if job.kind != InputKind.YOUTUBE_SINGLE:
-            raise ValueError("YouTube GUI execution supports YOUTUBE_SINGLE only")
+        if job.kind not in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK}:
+            raise ValueError("YouTube GUI execution supports single/bulk only")
         super().__init__(job, parent)
         self._progress_parser = YtDlpProgressParser()
         self._last_status = None
+        self._batch = SequentialBatchProgress(len(job.urls)) if job.kind == InputKind.YOUTUBE_BULK else None
 
     def build_command(self):
         options = dict(destination=self.job.destination, telemetry=True)
+        if self._batch is not None:
+            options["total_videos"] = len(self.job.urls)
         if self.job.mode == YouTubeMode.VIDEO:
             height = None if self.job.video_quality == VideoQuality.BEST else self.job.video_quality
             command = build_youtube_video_command(height, **options)
         else:
             command = build_youtube_audio_command(wav=self.job.mode == YouTubeMode.WAV, **options)
         # This adapter cannot execute a playlist, even if a URL contains list=.
-        return command + ["--no-playlist", "--", self.job.urls[0]]
+        return command + ["--no-playlist", "--", *self.job.urls]
 
     def consume_stdout(self, chunk, *, final=False):
         for event in self._progress_parser.feed(chunk, final=final):
-            if isinstance(event, ProgressEvent):
+            if isinstance(event, ItemStarted):
+                if self._batch is not None:
+                    previous = self._batch.event
+                    batch = self._batch.start_item(event)
+                    if batch is not None:
+                        if previous is None or batch.current_index != previous.current_index:
+                            self.progress_event.emit(ProgressEvent())
+                            self._last_status = None
+                            self.status_event.emit(StatusEvent(StatusKind.DOWNLOADING, self.engine))
+                        self.batch_event.emit(batch)
+            elif isinstance(event, ProgressEvent):
+                if self._batch is not None:
+                    batch = self._batch.progress(event.percent)
+                    if batch is not None:
+                        self.batch_event.emit(batch)
                 self.progress_event.emit(event)
             else:
                 if (event.kind == StatusKind.DOWNLOADING
@@ -291,11 +310,19 @@ class YouTubeDownloadProcess(DownloadProcess):
                     self._last_status = event
                     self.status_event.emit(event)
 
+    def complete(self, outcome, reason=None):
+        if (not self.done and not self.closing and outcome == ExecutionOutcome.COMPLETE
+                and self._batch is not None):
+            batch = self._batch.complete()
+            if batch is not None:
+                self.batch_event.emit(batch)
+        super().complete(outcome, reason)
+
 
 def create_download_process(job: DownloadJob, parent=None) -> DownloadProcess:
     """Only implemented adapters belong here; unsupported routes stay deferred."""
     if job.kind == InputKind.DIRECT_SINGLE:
         return DirectDownloadProcess(job, parent)
-    if job.kind == InputKind.YOUTUBE_SINGLE:
+    if job.kind in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK}:
         return YouTubeDownloadProcess(job, parent)
     raise UnsupportedExecution("GUI execution is not implemented for this job")

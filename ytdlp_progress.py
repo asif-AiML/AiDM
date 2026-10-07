@@ -11,10 +11,13 @@ import re
 from aria2_progress import parse_aria2_progress
 from progress_event import ProgressEvent
 from status_event import StatusEvent, StatusKind
+from batch_event import ItemStarted
 
 
 DOWNLOAD_PREFIX = "AIDM_PROGRESS:"
 POSTPROCESS_PREFIX = "AIDM_POSTPROCESS:"
+ITEM_PREFIX = "AIDM_ITEM:"
+ITEM_TEMPLATE = "before_dl:" + ITEM_PREFIX + "%(.{video_autonumber,title})j"
 DOWNLOAD_TEMPLATE = (
     'download:' + DOWNLOAD_PREFIX + '{"progress":'
     '%(progress.{status,downloaded_bytes,total_bytes,total_bytes_estimate,speed,eta})j,'
@@ -29,11 +32,16 @@ def _number(value):
     return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
 
 
-def parse_ytdlp_record(line: str) -> list[StatusEvent | ProgressEvent]:
+def parse_ytdlp_record(line: str) -> list[StatusEvent | ProgressEvent | ItemStarted]:
     """Only recognize our sentinels or the existing strict aria2 record format."""
     if len(line) > YtDlpProgressParser.MAX_RECORD_BYTES:
         return []
     try:
+        if line.startswith(ITEM_PREFIX):
+            data = json.loads(line[len(ITEM_PREFIX):])
+            if not isinstance(data, dict):
+                return []
+            return [ItemStarted(data.get("video_autonumber"), data.get("title"))]
         if line.startswith(POSTPROCESS_PREFIX):
             data = json.loads(line[len(POSTPROCESS_PREFIX):])
             if not isinstance(data, dict) or data.get("status") != "started":

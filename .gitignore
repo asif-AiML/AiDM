@@ -21,3 +21,5 @@ __pycache__/
 !/tests/fixtures/
 # Persistent single-YouTube execution and telemetry regressions (Milestone 15)
 !/tests/test_youtube_execution.py
+# Persistent shared batch and YouTube bulk execution checks (Milestone 16)
+!/tests/test_batch_execution.py

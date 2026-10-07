@@ -37,15 +37,30 @@ from inspection import classify_input, InputKind, MetadataStatus
 from metadata import prepare_metadata
 from status_event import StatusEvent, StatusKind, StatusReason
 from progress_event import ProgressEvent
+from batch_event import BatchEvent
 
 
-def render_status(event: StatusEvent) -> str:
+def format_batch_summary(kind: InputKind, count: int | None) -> str:
+    """Presentation only: use the job/inspection count, never queue telemetry."""
+    if count is None:
+        return ""
+    noun = {
+        InputKind.YOUTUBE_BULK: "video",
+        InputKind.YOUTUBE_PLAYLIST: "video",
+        InputKind.DIRECT_BULK: "file",
+    }.get(kind, "item")
+    return f"{count} {noun}{'' if count == 1 else 's'} downloaded"
+
+
+def render_status(event: StatusEvent, batch: BatchEvent | None = None) -> str:
     """Translate backend activity into GUI language, without changing state."""
     engine = event.engine or "download engine"
     if event.kind == StatusKind.STARTING_ENGINE:
         return f"Starting {engine}… ⚙️"
     if event.kind == StatusKind.FAILED and event.reason == StatusReason.START_FAILED:
         return f"Could not start {engine}. ⚠️"
+    if event.kind == StatusKind.DOWNLOADING and batch is not None:
+        return f"Downloading item {batch.current_index} of {batch.total_items}… ⬇️"
     return {
         StatusKind.DOWNLOADING: "Downloading… ⬇️",
         StatusKind.DOWNLOADING_VIDEO: "Downloading video… 🎬",
@@ -191,6 +206,21 @@ class AiDMWindow(QMainWindow):
 
         self.classification = QLabel("Classification placeholder")
         self.classification.setWordWrap(True)
+        self.queue_position = QLabel()
+        self.queue_position.setTextFormat(Qt.TextFormat.PlainText)
+        self.queue_position.setAccessibleName("Current batch position")
+        queue_font = self.queue_position.font()
+        queue_font.setPointSize(14)
+        queue_font.setBold(True)
+        self.queue_position.setFont(queue_font)
+        self.batch_summary = QLabel()
+        self.batch_summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.batch_summary.setWordWrap(True)
+        self.batch_summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        summary_font = self.batch_summary.font()
+        summary_font.setPointSize(14)
+        summary_font.setBold(True)
+        self.batch_summary.setFont(summary_font)
         self.media_title = JobTitleLabel("Media title placeholder")
         self.media_title.setTextFormat(Qt.TextFormat.PlainText)
         self.media_title.setWordWrap(True)
@@ -264,7 +294,9 @@ class AiDMWindow(QMainWindow):
 
         for widget in (
             self.classification,
+            self.queue_position,
             self.media_title,
+            self.batch_summary,
             self.item_count,
             self.mode_options,
             self.bulk_options,
@@ -303,6 +335,7 @@ class AiDMWindow(QMainWindow):
         self._retry_error = ""
         self._download_event: StatusEvent | None = None
         self._progress_event: ProgressEvent | None = None
+        self._batch_event: BatchEvent | None = None
         self._runtime_filename: str | None = None
         self._quality_generation = 0
         self._quality_worker = None
@@ -451,10 +484,12 @@ class AiDMWindow(QMainWindow):
         self._retry_error = ""
         process.status_event.connect(self.on_download_status)
         process.progress_event.connect(self.on_download_progress)
+        process.batch_event.connect(self.on_batch_event)
         process.filename_resolved.connect(self.on_filename_resolved)
         process.finished.connect(self.on_download_finished)
         self._download_event = None
         self._progress_event = None
+        self._batch_event = None
         self._runtime_filename = None
         self.set_state(GuiState.DOWNLOADING)
         process.start()
@@ -499,6 +534,14 @@ class AiDMWindow(QMainWindow):
                 and self.sender() is self._download_process
                 and not self._download_process.abort_requested):
             self._runtime_filename = filename
+            self.set_state(self.current_state)
+
+    @Slot(object)
+    def on_batch_event(self, event: BatchEvent):
+        if (not self._closing and self.current_state == GuiState.DOWNLOADING
+                and self.sender() is self._download_process
+                and not self._download_process.abort_requested):
+            self._batch_event = event
             self.set_state(self.current_state)
 
     def on_mode_changed(self):
@@ -590,6 +633,7 @@ class AiDMWindow(QMainWindow):
         self._retry_error = ""
         self._download_event = None
         self._progress_event = None
+        self._batch_event = None
         self._runtime_filename = None
         self._revision += 1
         self.reset_configuration()
@@ -679,6 +723,7 @@ class AiDMWindow(QMainWindow):
         self._retry_error = ""
         self._download_event = None
         self._progress_event = None
+        self._batch_event = None
         self._runtime_filename = None
         self._revision += 1
         self.reset_configuration()
@@ -727,9 +772,30 @@ class AiDMWindow(QMainWindow):
             "● " + CLASSIFICATION_LABELS[result.kind] if result else ""
         )
         title = result.title if result else None
-        if not title and (downloading or terminal):
+        batch = self._batch_event if downloading or terminal else None
+        # The attempted immutable job is authoritative even after failure/abort.
+        job = self._download_process.job if self._download_process and self._download_event else None
+        identity_kind = job.kind if job else result.route if result else None
+        bulk_kinds = {InputKind.YOUTUBE_BULK, InputKind.DIRECT_BULK}
+        terminal_batch = terminal and (
+            identity_kind in bulk_kinds | {InputKind.YOUTUBE_PLAYLIST} or batch is not None
+        )
+        summary_count = result.item_count if result else None
+        if identity_kind in bulk_kinds:
+            summary_count = len(job.urls) if job else len(result.urls) if result else None
+        summary = format_batch_summary(identity_kind, summary_count) if terminal_batch and state == GuiState.COMPLETE else ""
+        self.batch_summary.setText(summary)
+        self.batch_summary.setVisible(bool(summary))
+        if batch is not None:
+            # Runtime item identity replaces generic/first-item inspection data.
+            title = batch.title
+        elif not title and (downloading or terminal):
             title = self._runtime_filename
+        self.queue_position.setText(f"{batch.current_index} / {batch.total_items}" if batch else "")
+        self.queue_position.setVisible(downloading and batch is not None)
         title_font = QFont(self._media_title_font)
+        if batch is not None:
+            title_font.setBold(True)
         if terminal:
             title_font.setPointSize(13)
             title_font.setBold(True)
@@ -743,14 +809,14 @@ class AiDMWindow(QMainWindow):
         self.media_title.setSizePolicy(title_policy)
         self.media_title.set_identity(title or "", terminal)
         self.classification.setVisible(has_details and result is not None)
-        self.media_title.setVisible(has_details and bool(title))
+        self.media_title.setVisible(has_details and bool(title) and not terminal_batch)
         count = result.item_count if result else None
         count_unit = (
             "videos" if result and result.route == InputKind.YOUTUBE_BULK
             else "files" if result and result.route == InputKind.DIRECT_BULK else "items"
         )
         self.item_count.setText(f"{count} {count_unit}" if count is not None else "")
-        self.item_count.setVisible(has_details and count is not None)
+        self.item_count.setVisible(has_details and count is not None and not (downloading and batch) and not terminal_batch)
         configuring = self._configuration_started and state in {GuiState.READY, GuiState.NEEDS_OPTIONS}
         route = result.route if result else None
         self.mode_options.setVisible(configuring and route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK})
@@ -767,7 +833,9 @@ class AiDMWindow(QMainWindow):
         # Terminal states retain the real snapshot internally, not on screen.
         telemetry_visible = downloading
         progress = self._progress_event
-        percent = progress.percent if progress else None
+        percent = batch.aggregate_percent if batch is not None else progress.percent if progress else None
+        self.progress.setAccessibleName("Batch progress" if batch else "Download progress")
+        self.statistics.setToolTip("Current item/stream statistics" if batch else "")
         if percent is None:
             self.progress.reset()
         else:
@@ -777,7 +845,7 @@ class AiDMWindow(QMainWindow):
         statistics = format_statistics(progress) if progress else ""
         self.statistics.setText(statistics)
         self.statistics.setVisible(telemetry_visible and bool(statistics))
-        download_status = render_status(self._download_event) if self._download_event else ""
+        download_status = render_status(self._download_event, batch) if self._download_event else ""
         if downloading:
             status = download_status or "Download status placeholder (no download running)"
         elif self.input_result.error is not None:

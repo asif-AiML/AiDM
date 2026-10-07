@@ -597,8 +597,7 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertFalse(self.window.destination_section.isHidden())
 
     def test_all_other_routes_remain_deferred_including_inspector_direct(self):
-        for kind in (InputKind.YOUTUBE_BULK,
-                     InputKind.YOUTUBE_PLAYLIST, InputKind.DIRECT_BULK,
+        for kind in (InputKind.YOUTUBE_PLAYLIST, InputKind.DIRECT_BULK,
                      InputKind.HLS, InputKind.DASH, InputKind.GENERIC_YTDLP,
                      InputKind.STREAM_INSPECTOR, InputKind.TORRENT):
             self.window.input_field.clear()

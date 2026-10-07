@@ -920,6 +920,81 @@ state. yt-dlp/aria2c/FFmpeg retain their mature continuation and postprocessing
 behavior. Live YouTube extraction/authentication and real-world Abort/Retry remain
 part of the manual three-mode acceptance checks.
 
+
+## Milestone 16 YouTube bulk execution and shared batch presentation
+
+The execution factory now supports DIRECT_SINGLE, YOUTUBE_SINGLE and
+YOUTUBE_BULK. All other routes, including YouTube playlists and direct bulk,
+remain deferred. Single and bulk YouTube reuse `YouTubeDownloadProcess`: bulk
+passes all immutable job URLs, in order, to one yt-dlp invocation and one owned
+process group. Video consumes the already-selected maximum height/BEST and keeps
+MP4 merge/remux policy; Original Audio keeps `bestaudio/best`; WAV uses the same
+existing extraction/conversion path. There is no new discovery or mode UI.
+Destination, Abort, close cleanup, failure handling and same-job Retry are shared.
+
+`BatchEvent` is frozen and Qt-independent: validated `current_index`,
+`total_items`, optional `title`, optional `aggregate_percent`. It contains no
+transfer metrics. StatusEvent describes activity, ProgressEvent describes the
+current transfer, and BatchEvent describes queue position and aggregate progress.
+The generic `batch_event` channel and GUI renderer are reusable by future routes.
+
+GUI telemetry uses `before_dl:AIDM_ITEM:%(.{video_autonumber,title})j`; normal CLI
+bulk retains its human `[i/N] Starting download: title` output. The bounded yt-dlp
+parser produces normalized ItemStarted records. The adapter validates the index
+against `len(job.urls)`, never an output-supplied total. Captured yt-dlp 2026.08.19
+local HTTP runs verify 1/2/3 item numbering, mode sequencing and item-start records
+when already-completed files are revisited. Failures before item-start supply no
+identity; no missing title/index is guessed. Nonzero process exit remains FAILED.
+
+The active layout is classification → compact `2 / 10` → current genuine title →
+one aggregate bar → current-transfer statistics → backend activity → Abort.
+Runtime item titles replace generic/first-item inspection identity and render as
+plain text. No item list or per-item bars are introduced. Generic DOWNLOADING
+renders `Downloading item 2 of 10…`; observable merge/audio/conversion activity
+keeps its existing short wording, with queue position visible independently.
+
+The main bar is **item-weighted**, not byte-weighted:
+`100 * ((current_index - 1) + current_item_percent / 100) / total_items`.
+Without known current percent, the baseline is `100 * (current_index - 1) / N`.
+`SequentialBatchProgress` retains the highest contribution within/across phases,
+so audio resets and postprocessing cannot move the batch bar backward. Duplicate
+item-start records do not reset progress; backward/out-of-range starts are ignored.
+New item starts clear stale current-stream metrics, while aggregate progress stays.
+Statistics (speed, bytes, ETA) always refer to the current item/stream, not the batch.
+
+A stream's 100% contribution is not item/job completion: queue advancement is
+backend workflow evidence, and terminal success still requires successful overall
+process exit. Consequently the last item's bar may reach 100% during processing
+while the status remains active. Success may emit aggregate 100% as job-state
+truth; it never fabricates or changes ProgressEvent. Failure/Abort do not force
+aggregate completion. Terminal states hide active telemetry and retain the last
+known item identity internally; Milestone 16.1 defines the terminal summary below.
+
+Every new attempt clears batch identity/progress, including Retry; no previous
+index is assumed. Retry sends the same URLs/mode/quality/destination to a fresh
+adapter and follows actual item events as yt-dlp skips or resumes existing output.
+Input edits and development resets clear batch presentation. Sender/active-attempt
+checks reject stale batch signals just like existing status/progress signals.
+AiDM neither deletes partial state nor implements custom per-item resume.
+
+## Milestone 16.1 batch presentation polish
+
+Active queue position uses a shared 14-point bold label, above the changing
+current-item title and below the terminal banner in prominence. Execution and
+BatchEvent/progress semantics are unchanged.
+
+Terminal multi-item states hide the last active title and ordinary item-count
+line. COMPLETE instead displays a centered, bold 14-point aggregate summary
+above the existing 20-point result banner: `4 videos downloaded` or
+`4 files downloaded`. YouTube bulk/playlist use video(s), direct bulk uses file(s),
+and other batch routes default to item(s), with correct singular/plural wording.
+For URL-list bulk jobs the attempted immutable DownloadJob URL count is authoritative;
+playlist-sized summaries use reliable inspection item_count, never a one-URL
+playlist length or the last BatchEvent. Unknown counts produce no summary.
+FAILED and ABORTED show their existing outcome/Retry group without claiming a
+completed-item count. Single-job terminal title/runtime-filename retention remains
+unchanged. This does not enable playlist or direct-bulk execution.
+
 ---
 
 # 18. Torrent UI scope
