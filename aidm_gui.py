@@ -48,6 +48,12 @@ def render_status(event: StatusEvent) -> str:
         return f"Could not start {engine}. ⚠️"
     return {
         StatusKind.DOWNLOADING: "Downloading… ⬇️",
+        StatusKind.DOWNLOADING_VIDEO: "Downloading video… 🎬",
+        StatusKind.DOWNLOADING_AUDIO: "Downloading audio… 🎵",
+        StatusKind.MERGING: "Merging audio and video… 🧩",
+        StatusKind.CONVERTING_AUDIO: "Converting audio… 🎛️",
+        StatusKind.REMUXING: "Remuxing video… 🧩",
+        StatusKind.FINALIZING: "Finalizing… ⚙️",
         StatusKind.COMPLETE: "Download complete 🎉💫",
         StatusKind.FAILED: "Download failed 🚫🤕",
         StatusKind.ABORTING: "Aborting… 🛑",

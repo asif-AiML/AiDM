@@ -41,7 +41,8 @@ class GuiOptionsTests(unittest.TestCase):
         self.window.activateWindow()
         self.app.processEvents()
         self.workers = []
-        for target in ["urllib.request.urlopen", "subprocess.run", "subprocess.Popen"]:
+        for target in ["urllib.request.urlopen", "subprocess.run", "subprocess.Popen",
+                       "gui_execution.DownloadProcess.start"]:
             guard = patch(target, side_effect=AssertionError(f"Unexpected {target}"))
             guard.start()
             self.addCleanup(guard.stop)
@@ -107,9 +108,10 @@ class GuiOptionsTests(unittest.TestCase):
         self.assertEqual(self.window.download_job.video_quality, 1080)
         self.assertEqual(self.window.download_job.title, "Resolved title")
         self.assertEqual(self.window.current_state, GuiState.READY)
-        self.window.download_button.click()
-        self.assertEqual(self.window.current_state, GuiState.READY)
-        self.assertIn("execution is not implemented", self.window.active_status.text())
+        # Execution is now supported; this configuration test stops at dispatch.
+        with patch.object(self.window, "start_download") as start:
+            self.window.download_button.click()
+            start.assert_called_once_with(self.window.download_job)
 
     def test_audio_and_wav_never_discover(self):
         self.paste()
@@ -178,8 +180,9 @@ class GuiOptionsTests(unittest.TestCase):
         QTest.keyClick(self.window.input_field, Qt.Key.Key_Return)
         self.assertIsNone(self.window.download_job)
         self.window.mode_buttons[YouTubeMode.WAV].click()
-        QTest.keyClick(self.window.input_field, Qt.Key.Key_Return)
-        self.assertIn("execution is not implemented", self.window.active_status.text())
+        with patch.object(self.window, "start_download") as start:
+            QTest.keyClick(self.window.input_field, Qt.Key.Key_Return)
+            start.assert_called_once_with(self.window.download_job)
 
     def test_video_to_audio_invalidates_late_result(self):
         self.paste()

@@ -19,3 +19,5 @@ __pycache__/
 # Persistent telemetry regressions and captured console fixtures (Milestone 12)
 !/tests/test_progress.py
 !/tests/fixtures/
+# Persistent single-YouTube execution and telemetry regressions (Milestone 15)
+!/tests/test_youtube_execution.py

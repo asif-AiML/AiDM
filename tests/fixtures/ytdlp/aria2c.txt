@@ -1,0 +1,47 @@
+[generic] Extracting URL: http://127.0.0.1:36363/sample.mp4
+[generic] sample: Downloading webpage
+[info] sample: Downloading 1 format(s): mp4
+[download] Destination: /tmp/aidm-m15-capture-tt8v2nd_/aria2c/sample [sample].mp4
+[download] Writing temporary cookies file to "/tmp/tmp4t6p5nca.cookies"
+ *** Download Progress Summary as of Wed Oct  7 11:28:45 2026 *** 
+===============================================================================
+[#44b163 16384B/88543B(18%) CN:1 DL:16367B ETA:4s]
+FILE: /tmp/aidm-m15-capture-tt8v2nd_/aria2c//./sample [sample].mp4.part
+-------------------------------------------------------------------------------
+
+[#44b163 16384B/88543B(18%) CN:1 DL:16367B ETA:4s]
+ *** Download Progress Summary as of Wed Oct  7 11:28:46 2026 *** 
+===============================================================================
+[#44b163 32768B/88543B(37%) CN:1 DL:16375B ETA:3s]
+FILE: /tmp/aidm-m15-capture-tt8v2nd_/aria2c//./sample [sample].mp4.part
+-------------------------------------------------------------------------------
+
+[#44b163 32768B/88543B(37%) CN:1 DL:16375B ETA:3s]
+ *** Download Progress Summary as of Wed Oct  7 11:28:47 2026 *** 
+===============================================================================
+[#44b163 49152B/88543B(55%) CN:1 DL:16373B ETA:2s]
+FILE: /tmp/aidm-m15-capture-tt8v2nd_/aria2c//./sample [sample].mp4.part
+-------------------------------------------------------------------------------
+
+[#44b163 49152B/88543B(55%) CN:1 DL:16373B ETA:2s]
+ *** Download Progress Summary as of Wed Oct  7 11:28:48 2026 *** 
+===============================================================================
+[#44b163 65536B/88543B(74%) CN:1 DL:16371B ETA:1s]
+FILE: /tmp/aidm-m15-capture-tt8v2nd_/aria2c//./sample [sample].mp4.part
+-------------------------------------------------------------------------------
+
+[#44b163 65536B/88543B(74%) CN:1 DL:16371B ETA:1s]
+ *** Download Progress Summary as of Wed Oct  7 11:28:49 2026 *** 
+===============================================================================
+[#44b163 81920B/88543B(92%) CN:1 DL:16370B]
+FILE: /tmp/aidm-m15-capture-tt8v2nd_/aria2c//./sample [sample].mp4.part
+-------------------------------------------------------------------------------
+
+[#44b163 81920B/88543B(92%) CN:1 DL:16370B]
+AIDM_PROGRESS:{"progress":{"status": "finished", "downloaded_bytes": 88543, "total_bytes": 88543, "speed": 17519.803340703224},"info":{}}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "ExtractAudio"}
+[ExtractAudio] Destination: /tmp/aidm-m15-capture-tt8v2nd_/aria2c/sample [sample].wav
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "ExtractAudio"}
+Deleting original file /tmp/aidm-m15-capture-tt8v2nd_/aria2c/sample [sample].mp4 (pass -k to keep)
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "MoveFiles"}
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "MoveFiles"}

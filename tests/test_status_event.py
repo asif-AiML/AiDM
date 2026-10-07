@@ -30,7 +30,10 @@ class StatusEventTests(unittest.TestCase):
         self.assertEqual([field.name for field in fields(event)], ["kind", "engine", "reason"])
         self.assertEqual(set(StatusKind), {StatusKind.STARTING_ENGINE, StatusKind.DOWNLOADING,
                                           StatusKind.COMPLETE, StatusKind.FAILED,
-                                          StatusKind.ABORTING, StatusKind.ABORTED})
+                                          StatusKind.ABORTING, StatusKind.ABORTED,
+                                          StatusKind.DOWNLOADING_VIDEO, StatusKind.DOWNLOADING_AUDIO,
+                                          StatusKind.MERGING, StatusKind.CONVERTING_AUDIO,
+                                          StatusKind.REMUXING, StatusKind.FINALIZING})
 
 
 if __name__ == "__main__":

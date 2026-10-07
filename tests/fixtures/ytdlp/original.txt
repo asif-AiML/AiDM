@@ -1,0 +1,13 @@
+[info] fixture: Downloading 1 format(s): a
+[download] Destination: /tmp/aidm-m15-capture-0vouwn1t/original/AiDM local fixture [fixture].m4a
+[download] Writing temporary cookies file to "/tmp/tmpq9fc7t2p.cookies"
+ *** Download Progress Summary as of Wed Oct  7 12:45:53 2026 *** 
+===============================================================================
+[#e25cfa 16384B/27633B(59%) CN:1 DL:16384B]
+FILE: /tmp/aidm-m15-capture-0vouwn1t/original//./AiDM local fixture [fixture].m4a.part
+-------------------------------------------------------------------------------
+
+[#e25cfa 16384B/27633B(59%) CN:1 DL:16384B]
+AIDM_PROGRESS:{"progress":{"status": "finished", "downloaded_bytes": 27633, "total_bytes": 27633, "speed": 26173.062085969148},"info":{"vcodec": "none", "acodec": "mp4a.40.2"}}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "MoveFiles"}
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "MoveFiles"}

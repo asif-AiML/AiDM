@@ -3,6 +3,7 @@ import subprocess
 
 from downloader import ARIA2_DOWNLOADER_ARGUMENTS
 from utils import run_command
+from ytdlp_progress import DOWNLOAD_TEMPLATE, POSTPROCESS_TEMPLATE
 
 
 YOUTUBE_VIDEO_FORMAT = (
@@ -129,7 +130,10 @@ def choose_youtube_mode() -> str:
         print("Invalid option. Enter 1, 2 or 3.")
 
 
-def build_youtube_command(total_videos: int | None = None) -> list[str]:
+def build_youtube_command(
+    total_videos: int | None = None, *, destination: str | None = None,
+    telemetry: bool = False,
+) -> list[str]:
     command = [
         "yt-dlp",
         "--downloader",
@@ -137,7 +141,11 @@ def build_youtube_command(total_videos: int | None = None) -> list[str]:
         "--downloader",
         "dash,m3u8:native",
         "--downloader-args",
-        ARIA2_DOWNLOADER_ARGUMENTS,
+        ARIA2_DOWNLOADER_ARGUMENTS + (
+            " --show-console-readout=true --enable-color=false"
+            " --truncate-console-readout=false --human-readable=false --summary-interval=1"
+            if telemetry else ""
+        ),
     ]
 
     if total_videos is not None:
@@ -148,15 +156,24 @@ def build_youtube_command(total_videos: int | None = None) -> list[str]:
             "--progress",
         ])
 
+    if destination is not None:
+        command.extend(["-P", destination])
+    if telemetry:
+        command.extend([
+            "--newline", "--progress", "--no-color",
+            "--progress-template", DOWNLOAD_TEMPLATE,
+            "--progress-template", POSTPROCESS_TEMPLATE,
+        ])
     return command
 
 
 def build_youtube_video_command(
     max_height: int | None = None,
     total_videos: int | None = None,
+    *, destination: str | None = None, telemetry: bool = False,
 ) -> list[str]:
     """Resolution first, native MP4/M4A preferred, stream-copy final MP4."""
-    command = build_youtube_command(total_videos)
+    command = build_youtube_command(total_videos, destination=destination, telemetry=telemetry)
     command.extend([
         "-f", build_youtube_format(max_height),
         "--format-sort", "res,ext:mp4:m4a",
@@ -164,6 +181,18 @@ def build_youtube_video_command(
         "--merge-output-format", "mp4",
         "--remux-video", "mp4",
     ])
+    return command
+
+
+def build_youtube_audio_command(
+    total_videos: int | None = None, *, wav: bool = False,
+    destination: str | None = None, telemetry: bool = False,
+) -> list[str]:
+    """Share the mature original-audio and WAV paths with frontends."""
+    command = build_youtube_command(total_videos, destination=destination, telemetry=telemetry)
+    command.extend(["-f", "bestaudio/best"])
+    if wav:
+        command.extend(["--extract-audio", "--audio-format", "wav"])
     return command
 
 
@@ -222,12 +251,7 @@ def download_youtube_audio(urls: list[str]) -> int:
     print("Download engine: aria2c where supported")
     print("Output: original best available audio")
 
-    command = build_youtube_command(len(urls))
-
-    command.extend([
-        "-f",
-        "bestaudio/best",
-    ])
+    command = build_youtube_audio_command(len(urls))
 
     command.extend(urls)
 
@@ -240,15 +264,7 @@ def download_youtube_audio_wav(urls: list[str]) -> int:
     print("Download engine: aria2c where supported")
     print("Conversion: FFmpeg → WAV")
 
-    command = build_youtube_command(len(urls))
-
-    command.extend([
-        "-f",
-        "bestaudio/best",
-        "--extract-audio",
-        "--audio-format",
-        "wav",
-    ])
+    command = build_youtube_audio_command(len(urls), wav=True)
 
     command.extend(urls)
 

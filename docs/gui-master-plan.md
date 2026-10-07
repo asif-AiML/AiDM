@@ -869,6 +869,57 @@ styling is unchanged. Retry clears runtime
 identity for the new attempt as before. No URL fallback, parsing or metadata
 request is introduced; identity presentation is route neutral.
 
+
+## Milestone 15 single YouTube execution
+
+The factory now executes **DIRECT_SINGLE and YOUTUBE_SINGLE only**. Single
+YouTube Video, Original Audio and WAV use `YouTubeDownloadProcess` and the same
+`DownloadProcess` attempt lifecycle, GUI dispatch, Abort/Retry, stale-signal
+protection, genuine title and terminal presentation. Bulk, playlists, Inspector
+handoffs and other routes remain deferred, even when their underlying route is
+YouTube. No GUI lifecycle is duplicated.
+
+Shared `youtube.py` builders own format selection, aria2 handoff and output policy.
+Positive `video_quality` is consumed as the chosen maximum height; BEST maps to
+`None`, with no rediscovery. Video keeps resolution-first MP4/M4A preference and
+MP4 merge/remux without video transcoding. Original Audio keeps `bestaudio/best`;
+WAV uses the existing extraction/conversion flags. GUI execution supplies `-P`
+with the immutable destination and `--no-playlist`. CLI defaults, prompts,
+playlist/bulk behavior and cwd behavior remain unchanged.
+
+GUI-only telemetry uses yt-dlp JSON progress/postprocessor templates with AiDM
+sentinels. Native byte counts yield current-stream percent only with an exact
+positive total. Estimated totals are intentionally omitted. Optional fields stay
+optional. Installed yt-dlp's external aria2 downloader reports structured progress
+only at stream completion, so live external metrics reuse the strict aria2 parser
+with GUI-only exact-byte/uncolored summary flags. Captured local-media fixtures
+in `tests/fixtures/ytdlp/` verify both paths. The parser owns bounded CR/LF framing;
+the GUI still consumes only StatusEvent and ProgressEvent.
+
+Video and audio are separate transfers: percentage can restart between them; it
+is not aggregate whole-job progress. Codec fields identify native video/audio
+phases when known; external video-mode readouts use generic Downloading rather
+than guessing the stream. Real postprocessor-start hooks describe merging, audio
+conversion, remuxing and finalization. Transfer metrics clear at those stages.
+Only successful yt-dlp process exit declares COMPLETE, never a stream's 100%.
+
+The shared lifecycle optionally owns a Linux process session using Qt 6.7+
+CreateNewSession. The YouTube adapter enables it so ordinary yt-dlp descendants
+(aria2c and FFmpeg, which inherit the group) receive group TERM, then group KILL
+if still running after the existing 2500 ms Abort grace period. Parent exit does
+not finish an attempt while live group children remain. Cleanup polls without
+blocking interactive Abort; close-time cleanup is bounded and retains ownership
+if stopping fails. QProcess reaps its parent process; orphaned exited descendants
+are left to the OS reaper, and Linux zombie entries do not count as running.
+No global-name kill commands or shell invocation are used. This tree ownership
+currently targets Linux, not speculative Windows/macOS adapters.
+
+Retry reuses the exact immutable job in a fresh adapter, including mode, quality,
+title and destination. The GUI neither implements resume nor deletes partial
+state. yt-dlp/aria2c/FFmpeg retain their mature continuation and postprocessing
+behavior. Live YouTube extraction/authentication and real-world Abort/Retry remain
+part of the manual three-mode acceptance checks.
+
 ---
 
 # 18. Torrent UI scope

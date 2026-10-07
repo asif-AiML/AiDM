@@ -36,6 +36,7 @@ class FakeProcess(QObject):
     ProcessError = QProcess.ProcessError
     ExitStatus = QProcess.ExitStatus
     nullDevice = staticmethod(QProcess.nullDevice)
+    UnixProcessFlag = QProcess.UnixProcessFlag
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,6 +47,16 @@ class FakeProcess(QObject):
 
     def setStandardInputFile(self, path):
         pass
+
+    def setUnixProcessParameters(self, flags):
+        self.unix_flags = flags
+
+    def processId(self):
+        return 0  # Fake adapters must never signal a real OS process group.
+
+    def waitForStarted(self, timeout):
+        self.begin()
+        return True
 
     def start(self, program, arguments):
         self.calls.append((program, arguments))
@@ -586,7 +597,7 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertFalse(self.window.destination_section.isHidden())
 
     def test_all_other_routes_remain_deferred_including_inspector_direct(self):
-        for kind in (InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK,
+        for kind in (InputKind.YOUTUBE_BULK,
                      InputKind.YOUTUBE_PLAYLIST, InputKind.DIRECT_BULK,
                      InputKind.HLS, InputKind.DASH, InputKind.GENERIC_YTDLP,
                      InputKind.STREAM_INSPECTOR, InputKind.TORRENT):

@@ -7,6 +7,12 @@ from enum import Enum
 class StatusKind(Enum):
     STARTING_ENGINE = "starting_engine"
     DOWNLOADING = "downloading"
+    DOWNLOADING_VIDEO = "downloading_video"
+    DOWNLOADING_AUDIO = "downloading_audio"
+    MERGING = "merging"
+    CONVERTING_AUDIO = "converting_audio"
+    REMUXING = "remuxing"
+    FINALIZING = "finalizing"
     COMPLETE = "complete"
     FAILED = "failed"
     ABORTING = "aborting"

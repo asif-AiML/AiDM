@@ -1,14 +1,22 @@
 """Shared QProcess attempt lifecycle; DIRECT_SINGLE is the first engine adapter."""
 
 from enum import Enum
+import os
+from pathlib import Path
+import signal
+import sys
+import time
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
-from download_job import DownloadJob
+from download_job import DownloadJob, VideoQuality, YouTubeMode
 from aria2_progress import Aria2ProgressParser
 from downloader import build_direct_command
 from inspection import InputKind
 from status_event import StatusEvent, StatusKind, StatusReason
+from progress_event import ProgressEvent
+from youtube import build_youtube_video_command, build_youtube_audio_command
+from ytdlp_progress import YtDlpProgressParser
 
 
 class ExecutionOutcome(Enum):
@@ -31,6 +39,7 @@ class DownloadProcess(QObject):
     can_abort = True
     can_retry = True
     engine = None
+    owns_process_group = False
     ABORT_GRACE_MS = 2500
     MAX_STDERR_BYTES = 65536
 
@@ -42,7 +51,18 @@ class DownloadProcess(QObject):
         self.closing = False
         self.abort_requested = False
         self.stderr_tail = b""
+        self._process_group = None
+        self._pending_outcome = None
         self.process = QProcess(self)
+        if self.owns_process_group:
+            # Qt creates the session before exec, without Python fork callbacks.
+            # Linux /proc lets cleanup distinguish running children from zombies
+            # awaiting the OS reaper after their parent has exited.
+            if (not sys.platform.startswith("linux")
+                    or not hasattr(QProcess, "UnixProcessFlag")
+                    or not hasattr(QProcess.UnixProcessFlag, "CreateNewSession")):
+                raise UnsupportedExecution("Process-tree ownership currently requires Linux/Qt 6.7+")
+            self.process.setUnixProcessParameters(QProcess.UnixProcessFlag.CreateNewSession)
         self.process.setStandardInputFile(QProcess.nullDevice())
         self.process.started.connect(self.on_started)
         self.process.readyReadStandardOutput.connect(self.drain_output)
@@ -53,6 +73,9 @@ class DownloadProcess(QObject):
         self._abort_timer.setSingleShot(True)
         self._abort_timer.setInterval(self.ABORT_GRACE_MS)
         self._abort_timer.timeout.connect(self.escalate_abort)
+        self._cleanup_timer = QTimer(self)
+        self._cleanup_timer.setInterval(50)
+        self._cleanup_timer.timeout.connect(self.finish_group_cleanup)
 
     def build_command(self):
         raise NotImplementedError
@@ -66,12 +89,14 @@ class DownloadProcess(QObject):
         self.process.start(command[0], command[1:])
 
     def on_started(self):
+        if self.owns_process_group:
+            self._process_group = int(self.process.processId()) or None
         if self.done or self.closing:
             return
         if self.abort_requested:
             # terminate() may have arrived while QProcess was still starting.
             self._abort_timer.start()
-            self.process.terminate()
+            self.signal_process(signal.SIGTERM)
         else:
             self.status_event.emit(StatusEvent(StatusKind.DOWNLOADING, engine=self.engine))
 
@@ -82,13 +107,48 @@ class DownloadProcess(QObject):
         self.status_event.emit(StatusEvent(StatusKind.ABORTING, engine=self.engine))
         # Arm before terminate: even a synchronous finish cancels escalation.
         self._abort_timer.start()
-        self.process.terminate()
+        self.signal_process(signal.SIGTERM)
 
     def escalate_abort(self):
-        if (self.active and self.abort_requested and not self.closing
-                and self.process.state() != QProcess.ProcessState.NotRunning):
-            self.process.kill()
+        if (self.active and (self.abort_requested or self._pending_outcome is not None)
+                and not self.closing):
+            self.signal_process(signal.SIGKILL)
         # finished is authoritative; never declare ABORTED before reaping.
+
+    def signal_process(self, sig):
+        """Signal only this attempt's dedicated session, or its single QProcess."""
+        if self._process_group is not None:
+            try:
+                os.killpg(self._process_group, sig)
+            except ProcessLookupError:
+                pass
+        elif self.process.state() != QProcess.ProcessState.NotRunning:
+            if sig == signal.SIGTERM:
+                self.process.terminate()
+            else:
+                self.process.kill()
+
+    def group_running(self):
+        if self._process_group is None:
+            return False
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                fields = (entry / "stat").read_text().rsplit(") ", 1)[1].split()
+                if int(fields[2]) == self._process_group and fields[0] not in {"Z", "X"}:
+                    return True
+            except (FileNotFoundError, ProcessLookupError):
+                continue  # Process exited between enumeration and read.
+            except PermissionError:
+                # Same-user owned children are readable on Linux. Do not declare
+                # successful cleanup if this assumption is no longer true.
+                return True
+        return False
+
+    def finish_group_cleanup(self):
+        if self._pending_outcome is not None and not self.group_running():
+            self.complete(ExecutionOutcome.ABORTED if self.abort_requested else self._pending_outcome)
 
     def drain_output(self):
         chunk = bytes(self.process.readAllStandardOutput())
@@ -112,12 +172,25 @@ class DownloadProcess(QObject):
         outcome = (ExecutionOutcome.ABORTED if self.abort_requested else
                    ExecutionOutcome.COMPLETE if code == 0 and status == QProcess.ExitStatus.NormalExit
                    else ExecutionOutcome.FAILED)
-        self.complete(outcome)
+        if self.group_running():
+            # Parent exit must not abandon a still-running aria2c/FFmpeg child.
+            # Keep the attempt active until group cleanup finishes, including
+            # when the parent exits before the interactive Abort grace timer.
+            self._pending_outcome = outcome
+            if not self._abort_timer.isActive():
+                self._abort_timer.start()
+                self.signal_process(signal.SIGTERM)
+            self._cleanup_timer.start()
+        else:
+            self.complete(outcome)
 
     def complete(self, outcome, reason: StatusReason | None = None):
         if self.done:
             return
         self._abort_timer.stop()
+        self._cleanup_timer.stop()
+        self._process_group = None
+        self._pending_outcome = None
         self.done = True
         self.active = False
         if not self.closing:
@@ -131,18 +204,32 @@ class DownloadProcess(QObject):
         """Close-time hygiene only; interactive Abort never waits synchronously."""
         self.closing = True
         self._abort_timer.stop()
+        self._cleanup_timer.stop()
+        if self.process.state() == QProcess.ProcessState.Starting:
+            self.process.waitForStarted(1000)
+        self.signal_process(signal.SIGTERM)
         if self.process.state() != QProcess.ProcessState.NotRunning:
-            self.process.terminate()
             if not self.process.waitForFinished(1000):
-                self.process.kill()
+                self.signal_process(signal.SIGKILL)
                 self.process.waitForFinished(1000)
-        stopped = self.process.state() == QProcess.ProcessState.NotRunning
+        # Only close-time cleanup may wait. Interactive Abort uses Qt timers.
+        if self.group_running():
+            self.signal_process(signal.SIGKILL)
+            deadline = time.monotonic() + 1
+            while self.group_running() and time.monotonic() < deadline:
+                time.sleep(.01)
+        stopped = self.process.state() == QProcess.ProcessState.NotRunning and not self.group_running()
         if stopped:
+            self._abort_timer.stop()
+            self._cleanup_timer.stop()
+            self._process_group = None
             self.active = False
         else:
             self.closing = False
             if self.abort_requested:
                 self._abort_timer.start()
+            if self._pending_outcome is not None:
+                self._cleanup_timer.start()
         return stopped
 
 
@@ -169,8 +256,46 @@ class DirectDownloadProcess(DownloadProcess):
             self.filename_resolved.emit(filename)
 
 
+class YouTubeDownloadProcess(DownloadProcess):
+    """Single YouTube modes; shared builders and lifecycle own all mechanics."""
+
+    engine = "yt-dlp"
+    owns_process_group = True
+
+    def __init__(self, job: DownloadJob, parent=None):
+        if job.kind != InputKind.YOUTUBE_SINGLE:
+            raise ValueError("YouTube GUI execution supports YOUTUBE_SINGLE only")
+        super().__init__(job, parent)
+        self._progress_parser = YtDlpProgressParser()
+        self._last_status = None
+
+    def build_command(self):
+        options = dict(destination=self.job.destination, telemetry=True)
+        if self.job.mode == YouTubeMode.VIDEO:
+            height = None if self.job.video_quality == VideoQuality.BEST else self.job.video_quality
+            command = build_youtube_video_command(height, **options)
+        else:
+            command = build_youtube_audio_command(wav=self.job.mode == YouTubeMode.WAV, **options)
+        # This adapter cannot execute a playlist, even if a URL contains list=.
+        return command + ["--no-playlist", "--", self.job.urls[0]]
+
+    def consume_stdout(self, chunk, *, final=False):
+        for event in self._progress_parser.feed(chunk, final=final):
+            if isinstance(event, ProgressEvent):
+                self.progress_event.emit(event)
+            else:
+                if (event.kind == StatusKind.DOWNLOADING
+                        and self.job.mode in {YouTubeMode.ORIGINAL_AUDIO, YouTubeMode.WAV}):
+                    event = StatusEvent(StatusKind.DOWNLOADING_AUDIO, self.engine)
+                if event != self._last_status:
+                    self._last_status = event
+                    self.status_event.emit(event)
+
+
 def create_download_process(job: DownloadJob, parent=None) -> DownloadProcess:
     """Only implemented adapters belong here; unsupported routes stay deferred."""
     if job.kind == InputKind.DIRECT_SINGLE:
         return DirectDownloadProcess(job, parent)
+    if job.kind == InputKind.YOUTUBE_SINGLE:
+        return YouTubeDownloadProcess(job, parent)
     raise UnsupportedExecution("GUI execution is not implemented for this job")
