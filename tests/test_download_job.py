@@ -170,20 +170,17 @@ class DownloadJobTests(unittest.TestCase):
                 with self.subTest(kind=kind, quality=quality):
                     self.assertEqual(build_download_job(result, destination="/tmp/aidm-model-fixture", mode=mode, video_quality=quality).video_quality, quality)
 
-    def test_inspector_youtube_quality_uses_underlying_route(self):
+    def test_inspector_context_needs_no_youtube_choices(self):
         for route in (InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_PLAYLIST):
             stream = StreamInput("https://youtube.com/watch?v=exact&token=a%2Fb", title="Canonical",
                                  headers={"User-Agent": "UA"}, subtitles=["sub", "sub"])
             result = InspectionResult(InputKind.STREAM_INSPECTOR, [stream.url], stream=stream, route_kind=route)
-            mode = YouTubeMode.VIDEO if route == InputKind.YOUTUBE_SINGLE else None
-            with self.assertRaises(ValueError):
-                build_download_job(result, destination="/tmp/aidm-model-fixture", mode=mode)
-            job = build_download_job(result, destination="/tmp/aidm-model-fixture", mode=mode, video_quality=1080)
+            job = build_download_job(result, destination="/tmp/aidm-model-fixture")
             self.assertEqual(job.urls, (stream.url,))
             self.assertEqual(job.title, "Canonical")
             self.assertEqual(job.subtitles, ("sub", "sub"))
             self.assertEqual(job.headers, stream.headers)
-            self.assertEqual(job.video_quality, 1080)
+            self.assertIsNone(job.video_quality)
             with self.assertRaises(ValueError):
                 build_download_job(result, destination="/tmp/aidm-model-fixture", mode=YouTubeMode.WAV, video_quality=1080)
 

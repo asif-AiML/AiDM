@@ -596,9 +596,9 @@ class GuiExecutionTests(unittest.TestCase):
                          "Download folder is unavailable — choose another folder. 📁⚠️")
         self.assertFalse(self.window.destination_section.isHidden())
 
-    def test_all_other_routes_remain_deferred_including_inspector_direct(self):
+    def test_unimplemented_routes_remain_deferred(self):
         for kind in (InputKind.HLS, InputKind.DASH, InputKind.GENERIC_YTDLP,
-                     InputKind.STREAM_INSPECTOR, InputKind.TORRENT):
+                     InputKind.TORRENT):
             self.window.input_field.clear()
             self.inspect(kind, InputKind.DIRECT_SINGLE if kind == InputKind.STREAM_INSPECTOR else None)
             if kind in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK}:

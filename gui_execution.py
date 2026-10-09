@@ -13,8 +13,13 @@ from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 from download_job import BulkMode, DownloadJob, VideoQuality, YouTubeMode
 from aria2_progress import Aria2ProgressParser
 from aria2_parallel_progress import Aria2ParallelProgressParser, Aria2Snapshot
-from downloader import build_direct_command, build_direct_bulk_parallel_command
+from downloader import (
+    build_direct_command, build_direct_bulk_parallel_command, build_stream_command,
+    build_ytdlp_media_command, build_subtitle_command, select_subtitle_sidecar,
+)
 from inspection import InputKind
+from stream_parser import StreamInput
+from workflow_warning import WorkflowWarning
 from status_event import StatusEvent, StatusKind, StatusReason
 from progress_event import ProgressEvent
 from youtube import build_youtube_video_command, build_youtube_audio_command, build_youtube_playlist_command
@@ -36,6 +41,7 @@ class DownloadProcess(QObject):
     """One owned process per attempt. Engine adapters supply command and output."""
 
     status_event = Signal(object)
+    warning_event = Signal(object)
     progress_event = Signal(object)
     batch_event = Signal(object)
     filename_resolved = Signal(str)
@@ -43,6 +49,7 @@ class DownloadProcess(QObject):
     can_abort = True
     can_retry = True
     engine = None
+    downloading_status = StatusKind.DOWNLOADING
     owns_process_group = False
     ABORT_GRACE_MS = 2500
     MAX_STDERR_BYTES = 65536
@@ -57,7 +64,19 @@ class DownloadProcess(QObject):
         self.stderr_tail = b""
         self._process_group = None
         self._pending_outcome = None
+        self.create_process()
+        self._abort_timer = QTimer(self)
+        self._abort_timer.setSingleShot(True)
+        self._abort_timer.setInterval(self.ABORT_GRACE_MS)
+        self._abort_timer.timeout.connect(self.escalate_abort)
+        self._cleanup_timer = QTimer(self)
+        self._cleanup_timer.setInterval(50)
+        self._cleanup_timer.timeout.connect(self.finish_group_cleanup)
+
+    def create_process(self):
+        """Create one owned stage; late notifications from replaced stages are ignored."""
         self.process = QProcess(self)
+        self._process_events_enabled = True
         if self.owns_process_group:
             # Qt creates the session before exec, without Python fork callbacks.
             # Linux /proc lets cleanup distinguish running children from zombies
@@ -68,18 +87,19 @@ class DownloadProcess(QObject):
                 raise UnsupportedExecution("Process-tree ownership currently requires Linux/Qt 6.7+")
             self.process.setUnixProcessParameters(QProcess.UnixProcessFlag.CreateNewSession)
         self.process.setStandardInputFile(QProcess.nullDevice())
-        self.process.started.connect(self.on_started)
-        self.process.readyReadStandardOutput.connect(self.drain_output)
-        self.process.readyReadStandardError.connect(self.drain_output)
-        self.process.errorOccurred.connect(self.on_error)
-        self.process.finished.connect(self.on_finished)
-        self._abort_timer = QTimer(self)
-        self._abort_timer.setSingleShot(True)
-        self._abort_timer.setInterval(self.ABORT_GRACE_MS)
-        self._abort_timer.timeout.connect(self.escalate_abort)
-        self._cleanup_timer = QTimer(self)
-        self._cleanup_timer.setInterval(50)
-        self._cleanup_timer.timeout.connect(self.finish_group_cleanup)
+        process = self.process
+        for notification, callback in (
+            (process.started, self.on_started),
+            (process.readyReadStandardOutput, self.drain_output),
+            (process.readyReadStandardError, self.drain_output),
+            (process.errorOccurred, self.on_error),
+            (process.finished, self.on_finished),
+        ):
+            notification.connect(
+                lambda *args, process=process, callback=callback:
+                    callback(*args) if self.process is process and not self.done
+                    and self._process_events_enabled else None
+            )
 
     def build_command(self):
         raise NotImplementedError
@@ -102,7 +122,7 @@ class DownloadProcess(QObject):
             self._abort_timer.start()
             self.signal_process(signal.SIGTERM)
         else:
-            self.status_event.emit(StatusEvent(StatusKind.DOWNLOADING, engine=self.engine))
+            self.status_event.emit(StatusEvent(self.downloading_status, engine=self.engine))
 
     def abort(self):
         if not self.can_abort or not self.active or self.abort_requested or self.closing:
@@ -188,13 +208,17 @@ class DownloadProcess(QObject):
         else:
             self.complete(outcome)
 
-    def complete(self, outcome, reason: StatusReason | None = None):
-        if self.done:
-            return
+    def clear_process_tracking(self):
+        """Forget only a reaped process and its fully stopped process group."""
         self._abort_timer.stop()
         self._cleanup_timer.stop()
         self._process_group = None
         self._pending_outcome = None
+
+    def complete(self, outcome, reason: StatusReason | None = None):
+        if self.done:
+            return
+        self.clear_process_tracking()
         self.done = True
         self.active = False
         if not self.closing:
@@ -382,6 +406,114 @@ class DirectBulkDownloadProcess(DownloadProcess):
         return stopped
 
 
+class StreamInspectorDownloadProcess(DownloadProcess):
+    """One browser-assisted attempt: main media, then an optional subtitle."""
+
+    engine = "yt-dlp"
+    owns_process_group = True
+
+    def __init__(self, job: DownloadJob, parent=None):
+        if job.kind != InputKind.STREAM_INSPECTOR:
+            raise ValueError("Inspector workflow requires STREAM_INSPECTOR")
+        super().__init__(job, parent)
+        self._subtitle_stage = False
+        self._between_stages = False
+        self._subtitle_url = None
+        self._progress_parser = YtDlpProgressParser()
+        self._last_status = None
+        self._stage_timer = QTimer(self)
+        self._stage_timer.setSingleShot(True)
+        self._stage_timer.timeout.connect(self.start_subtitle)
+
+    def build_command(self):
+        job = self.job
+        if self._subtitle_stage:
+            return build_subtitle_command(
+                self._subtitle_url, job.title, job.headers, destination=job.destination,
+            )
+        options = dict(destination=job.destination, telemetry=True)
+        stream_type = {InputKind.HLS: "hls", InputKind.DASH: "dash"}.get(job.route_kind)
+        if stream_type is not None:
+            return build_stream_command(StreamInput(
+                job.urls[0], dict(job.headers), stream_type, job.title, list(job.subtitles),
+            ), **options)
+        return build_ytdlp_media_command(job.urls[0], job.title, job.headers, **options)
+
+    def consume_stdout(self, chunk, *, final=False):
+        if self._subtitle_stage:
+            return  # Tiny sidecars need no new progress parser or artificial bar.
+        for event in self._progress_parser.feed(chunk, final=final):
+            if self.done or self.closing or self.abort_requested:
+                break
+            if isinstance(event, ProgressEvent):
+                self.progress_event.emit(event)
+            elif isinstance(event, StatusEvent) and event != self._last_status:
+                self._last_status = event
+                self.status_event.emit(event)
+            # Item/title output cannot replace the browser-provided identity.
+
+    def complete(self, outcome, reason=None):
+        if self.done:
+            return
+        if not self.closing and self.abort_requested:
+            outcome = ExecutionOutcome.ABORTED
+        if not self.closing and outcome != ExecutionOutcome.ABORTED:
+            if self._subtitle_stage and outcome == ExecutionOutcome.FAILED:
+                self.warning_event.emit(WorkflowWarning.SUBTITLE_FAILED)
+                outcome, reason = ExecutionOutcome.COMPLETE, None
+            elif not self._subtitle_stage and outcome == ExecutionOutcome.COMPLETE:
+                self._subtitle_url, warning = select_subtitle_sidecar(self.job.subtitles, self.job.title)
+                if warning is not None:
+                    self.warning_event.emit(warning)
+                if self._subtitle_url is not None:
+                    # Called only after the parent and owned children have stopped.
+                    self.clear_process_tracking()
+                    self._process_events_enabled = False
+                    self._between_stages = True
+                    self.progress_event.emit(ProgressEvent())
+                    if not self.done and not self.closing and not self.abort_requested:
+                        self._stage_timer.start(0)
+                    return
+        if self.abort_requested:
+            outcome = ExecutionOutcome.ABORTED
+        self._stage_timer.stop()
+        super().complete(outcome, reason)
+
+    def start_subtitle(self):
+        if self.done or self.closing or not self._between_stages:
+            return
+        if self.abort_requested:
+            self.complete(ExecutionOutcome.ABORTED)
+            return
+        self._between_stages = False
+        self._subtitle_stage = True
+        self.engine = "aria2c"
+        self.downloading_status = StatusKind.DOWNLOADING_SUBTITLE
+        previous = self.process
+        self.create_process()
+        previous.deleteLater()
+        self.stderr_tail = b""
+        command = self.build_command()
+        self.status_event.emit(StatusEvent(StatusKind.STARTING_ENGINE, self.engine))
+        # A status callback can synchronously request Abort or close.
+        if self.done or self.closing or self.abort_requested:
+            if self.abort_requested and not self.closing:
+                self.complete(ExecutionOutcome.ABORTED)
+            return
+        self.process.start(command[0], command[1:])
+
+    def abort(self):
+        super().abort()
+        if self._between_stages and self.abort_requested and not self.closing:
+            self.complete(ExecutionOutcome.ABORTED)
+
+    def shutdown(self):
+        stopped = super().shutdown()
+        if stopped:
+            self._stage_timer.stop()
+        return stopped
+
+
 class YouTubeDownloadProcess(DownloadProcess):
     """YouTube modes and video playlists, with one shared process attempt."""
 
@@ -453,6 +585,8 @@ class YouTubeDownloadProcess(DownloadProcess):
 
 def create_download_process(job: DownloadJob, parent=None) -> DownloadProcess:
     """Only implemented adapters belong here; unsupported routes stay deferred."""
+    if job.kind == InputKind.STREAM_INSPECTOR:
+        return StreamInspectorDownloadProcess(job, parent)
     if job.kind == InputKind.DIRECT_SINGLE:
         return DirectDownloadProcess(job, parent)
     if job.kind == InputKind.DIRECT_BULK:

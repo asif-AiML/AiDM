@@ -29,6 +29,15 @@ POSTPROCESS_TEMPLATE = (
 )
 
 
+def ytdlp_telemetry_options() -> list[str]:
+    """GUI-only output options shared by every yt-dlp command path."""
+    return [
+        "--newline", "--progress", "--no-color",
+        "--progress-template", DOWNLOAD_TEMPLATE,
+        "--progress-template", POSTPROCESS_TEMPLATE,
+    ]
+
+
 def _number(value):
     return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
 

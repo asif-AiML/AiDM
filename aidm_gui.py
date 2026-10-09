@@ -38,6 +38,15 @@ from metadata import prepare_metadata
 from status_event import StatusEvent, StatusKind, StatusReason
 from progress_event import ProgressEvent
 from batch_event import BatchEvent, ParallelBatchEvent
+from workflow_warning import WorkflowWarning
+
+
+def render_warning(warning: WorkflowWarning) -> str:
+    return {
+        WorkflowWarning.SUBTITLE_FAILED: "Subtitle could not be downloaded ⚠️",
+        WorkflowWarning.MULTIPLE_SUBTITLES_SKIPPED: "Multiple subtitles are not supported yet — subtitles skipped ⚠️",
+        WorkflowWarning.SUBTITLE_WITHOUT_TITLE: "Subtitle skipped — no title was supplied ⚠️",
+    }[warning]
 
 
 def format_batch_summary(kind: InputKind, count: int | None) -> str:
@@ -69,6 +78,7 @@ def render_status(event: StatusEvent, batch: BatchEvent | ParallelBatchEvent | N
         StatusKind.DOWNLOADING: "Downloading… ⬇️",
         StatusKind.DOWNLOADING_VIDEO: "Downloading video… 🎬",
         StatusKind.DOWNLOADING_AUDIO: "Downloading audio… 🎵",
+        StatusKind.DOWNLOADING_SUBTITLE: "Downloading subtitle… 📄",
         StatusKind.MERGING: "Merging audio and video… 🧩",
         StatusKind.CONVERTING_AUDIO: "Converting audio… 🎛️",
         StatusKind.REMUXING: "Remuxing video… 🧩",
@@ -304,6 +314,11 @@ class AiDMWindow(QMainWindow):
         result_font.setPointSize(20)
         result_font.setBold(True)
         self.result_message.setFont(result_font)
+        self.workflow_warning = QLabel()
+        self.workflow_warning.setTextFormat(Qt.TextFormat.PlainText)
+        self.workflow_warning.setWordWrap(True)
+        self.workflow_warning.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.workflow_warning.setAccessibleName("Download warning")
 
         for widget in (
             self.classification,
@@ -321,6 +336,7 @@ class AiDMWindow(QMainWindow):
             self.active_status,
             self.download_button,
             self.result_message,
+            self.workflow_warning,
             self.abort_button,
             self.retry_button,
         ):
@@ -348,6 +364,7 @@ class AiDMWindow(QMainWindow):
         self._retry_job = None
         self._retry_error = ""
         self._download_event: StatusEvent | None = None
+        self._workflow_warning: WorkflowWarning | None = None
         self._progress_event: ProgressEvent | None = None
         self._batch_event: BatchEvent | ParallelBatchEvent | None = None
         self._runtime_filename: str | None = None
@@ -427,7 +444,7 @@ class AiDMWindow(QMainWindow):
                     })
 
     def requires_options(self):
-        return self.inspection_result.route in {
+        return self.inspection_result.kind in {
             InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK,
             InputKind.YOUTUBE_PLAYLIST, InputKind.DIRECT_BULK,
         }
@@ -497,11 +514,13 @@ class AiDMWindow(QMainWindow):
         self._retry_job = job if process.can_retry else None
         self._retry_error = ""
         process.status_event.connect(self.on_download_status)
+        process.warning_event.connect(self.on_workflow_warning)
         process.progress_event.connect(self.on_download_progress)
         process.batch_event.connect(self.on_batch_event)
         process.filename_resolved.connect(self.on_filename_resolved)
         process.finished.connect(self.on_download_finished)
         self._download_event = None
+        self._workflow_warning = None
         self._progress_event = None
         self._batch_event = None
         self._runtime_filename = None
@@ -524,6 +543,14 @@ class AiDMWindow(QMainWindow):
         if (not self._closing and self.sender() is self._download_process
                 and self.current_state == GuiState.DOWNLOADING):
             self._download_event = event
+            self.set_state(self.current_state)
+
+    @Slot(object)
+    def on_workflow_warning(self, warning: WorkflowWarning):
+        if (not self._closing and self.sender() is self._download_process
+                and self.current_state == GuiState.DOWNLOADING
+                and not self._download_process.abort_requested):
+            self._workflow_warning = warning
             self.set_state(self.current_state)
 
     @Slot(object)
@@ -619,7 +646,7 @@ class AiDMWindow(QMainWindow):
         mode = next((value for value, button in self.mode_buttons.items() if button.isChecked()), None)
         bulk = next((value for value, button in self.bulk_buttons.items() if button.isChecked()), None)
         quality = self.quality_choice.currentData()
-        route = self.inspection_result.route
+        route = self.inspection_result.kind
         missing = (
             self._quality_pending
             or (route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK} and mode is None)
@@ -646,6 +673,7 @@ class AiDMWindow(QMainWindow):
         self._retry_job = None
         self._retry_error = ""
         self._download_event = None
+        self._workflow_warning = None
         self._progress_event = None
         self._batch_event = None
         self._runtime_filename = None
@@ -736,6 +764,7 @@ class AiDMWindow(QMainWindow):
         self._retry_job = None
         self._retry_error = ""
         self._download_event = None
+        self._workflow_warning = None
         self._progress_event = None
         self._batch_event = None
         self._runtime_filename = None
@@ -790,6 +819,8 @@ class AiDMWindow(QMainWindow):
         parallel_batch = isinstance(batch, ParallelBatchEvent)
         # The attempted immutable job is authoritative even after failure/abort.
         job = self._download_process.job if self._download_process and self._download_event else None
+        if job is not None and job.title is not None and (downloading or terminal):
+            title = job.title
         identity_kind = job.kind if job else result.route if result else None
         # Collection identity stays stable; media_title remains the current item
         # slot shared with ordinary bulk. Never write item titles into inspection.
@@ -853,7 +884,7 @@ class AiDMWindow(QMainWindow):
         self.item_count.setText(f"{count} {count_unit}" if count is not None else "")
         self.item_count.setVisible(has_details and count is not None and not (downloading and batch) and not terminal_batch)
         configuring = self._configuration_started and state in {GuiState.READY, GuiState.NEEDS_OPTIONS}
-        route = result.route if result else None
+        route = result.kind if result else None
         self.mode_options.setVisible(configuring and route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK})
         self.bulk_options.setVisible(configuring and route == InputKind.DIRECT_BULK)
         self.quality_options.setVisible(configuring and not self._quality_pending
@@ -927,6 +958,8 @@ class AiDMWindow(QMainWindow):
             GuiState.ABORTED: "Download aborted 🙄 (state preview)",
         }.get(state, ""))
         self.result_message.setVisible(state in {GuiState.COMPLETE, GuiState.FAILED, GuiState.ABORTED})
+        self.workflow_warning.setText(render_warning(self._workflow_warning) if self._workflow_warning else "")
+        self.workflow_warning.setVisible(terminal and self._workflow_warning is not None)
         if previous_state != state and state in {
             GuiState.DOWNLOADING, GuiState.COMPLETE, GuiState.FAILED, GuiState.ABORTED,
         }:

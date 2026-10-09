@@ -1,9 +1,9 @@
 import json
 import subprocess
 
-from downloader import ARIA2_DOWNLOADER_ARGUMENTS
+from downloader import ARIA2_DOWNLOADER_ARGUMENTS, ARIA2_GUI_TELEMETRY_ARGUMENTS
 from utils import run_command
-from ytdlp_progress import DOWNLOAD_TEMPLATE, POSTPROCESS_TEMPLATE, ITEM_TEMPLATE, PLAYLIST_ITEM_TEMPLATE
+from ytdlp_progress import ITEM_TEMPLATE, PLAYLIST_ITEM_TEMPLATE, ytdlp_telemetry_options
 
 
 YOUTUBE_VIDEO_FORMAT = (
@@ -142,8 +142,7 @@ def build_youtube_command(
         "dash,m3u8:native",
         "--downloader-args",
         ARIA2_DOWNLOADER_ARGUMENTS + (
-            " --show-console-readout=true --enable-color=false"
-            " --truncate-console-readout=false --human-readable=false --summary-interval=1"
+            ARIA2_GUI_TELEMETRY_ARGUMENTS
             if telemetry else ""
         ),
     ]
@@ -160,11 +159,7 @@ def build_youtube_command(
     if destination is not None:
         command.extend(["-P", destination])
     if telemetry:
-        command.extend([
-            "--newline", "--progress", "--no-color",
-            "--progress-template", DOWNLOAD_TEMPLATE,
-            "--progress-template", POSTPROCESS_TEMPLATE,
-        ])
+        command.extend(ytdlp_telemetry_options())
     return command
 
 

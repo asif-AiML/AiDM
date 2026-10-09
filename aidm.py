@@ -11,7 +11,9 @@ from downloader import (
     download_subtitle,
     download_torrent,
     download_with_ytdlp,
+    select_subtitle_sidecar,
 )
+from workflow_warning import WorkflowWarning
 from inspection import (
     InputKind,
     build_stream_input_from_args,
@@ -70,19 +72,22 @@ def download_media_with_sidecar(stream: StreamInput) -> int:
             headers=stream.headers,
         )
 
-    if media_result != 0 or not stream.subtitles:
+    if media_result != 0:
         return media_result
 
-    if len(stream.subtitles) > 1:
-        print("Warning: multiple subtitle sidecars are not yet supported; subtitles skipped.")
-        return 0
-
-    if not stream.title:
-        print("Warning: subtitle skipped because no title was supplied for deterministic sidecar naming.")
+    subtitle_url, warning = select_subtitle_sidecar(stream.subtitles, stream.title)
+    if warning is not None:
+        print({
+            WorkflowWarning.MULTIPLE_SUBTITLES_SKIPPED:
+                "Warning: multiple subtitle sidecars are not yet supported; subtitles skipped.",
+            WorkflowWarning.SUBTITLE_WITHOUT_TITLE:
+                "Warning: subtitle skipped because no title was supplied for deterministic sidecar naming.",
+        }[warning])
+    if subtitle_url is None:
         return 0
 
     subtitle_result = download_subtitle(
-        stream.subtitles[0],
+        subtitle_url,
         stream.title,
         headers=stream.headers,
     )

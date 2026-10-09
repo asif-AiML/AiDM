@@ -4,8 +4,25 @@ from urllib.parse import urlparse
 
 from stream_parser import StreamInput
 from utils import run_command, sanitize_filename
+from workflow_warning import WorkflowWarning
+from ytdlp_progress import ytdlp_telemetry_options
 
 ARIA2_DOWNLOADER_ARGUMENTS = "aria2c:-x 8 -s 8 -k 1M"
+ARIA2_GUI_TELEMETRY_ARGUMENTS = (
+    " --show-console-readout=true --enable-color=false"
+    " --truncate-console-readout=false --human-readable=false --summary-interval=1"
+)
+
+
+def select_subtitle_sidecar(subtitles, title):
+    """Shared CLI/GUI policy; the caller invokes this only after media success."""
+    if not subtitles:
+        return None, None
+    if len(subtitles) > 1:
+        return None, WorkflowWarning.MULTIPLE_SUBTITLES_SKIPPED
+    if not title:
+        return None, WorkflowWarning.SUBTITLE_WITHOUT_TITLE
+    return subtitles[0], None
 
 
 def download_subtitle(
@@ -13,6 +30,13 @@ def download_subtitle(
     title: str,
     headers: dict[str, str] | None = None,
 ) -> int:
+    return run_command(build_subtitle_command(subtitle_url, title, headers))
+
+
+def build_subtitle_command(
+    subtitle_url: str, title: str, headers: dict[str, str] | None = None,
+    *, destination: str | None = None,
+) -> list[str]:
     suffix = Path(urlparse(subtitle_url).path).suffix.lower()
     if suffix not in {".vtt", ".srt", ".ass", ".ssa", ".ttml", ".dfxp"}:
         suffix = ".vtt"
@@ -29,8 +53,10 @@ def download_subtitle(
     for header_name, header_value in (headers or {}).items():
         command.append(f"--header={header_name}:{header_value}")
 
+    if destination is not None:
+        command.append(f"--dir={destination}")
     command.append(subtitle_url)
-    return run_command(command)
+    return command
 
 
 def download_torrent(torrent_path: str) -> int:
@@ -140,6 +166,14 @@ def download_with_ytdlp(
     print("Extractor: yt-dlp")
     print("Download engine: aria2c where supported")
 
+    return run_command(build_ytdlp_media_command(url, title, headers))
+
+
+def build_ytdlp_media_command(
+    url: str, title: str | None = None, headers: dict[str, str] | None = None,
+    *, destination: str | None = None, telemetry: bool = False,
+) -> list[str]:
+
     command = [
         "yt-dlp",
     ]
@@ -165,18 +199,26 @@ def download_with_ytdlp(
         "--downloader",
         "dash,m3u8:native",
         "--downloader-args",
-        ARIA2_DOWNLOADER_ARGUMENTS,
-        url,
+        ARIA2_DOWNLOADER_ARGUMENTS + (ARIA2_GUI_TELEMETRY_ARGUMENTS if telemetry else ""),
     ])
-
-
-    return run_command(command)
+    if destination is not None:
+        command.extend(["-P", destination])
+    if telemetry:
+        command.extend(ytdlp_telemetry_options())
+    return command + [url]
 
 
 def download_stream(stream: StreamInput) -> int:
     print(f"Input type: {stream.stream_type.upper()} stream")
     print("Extractor/downloader: yt-dlp native")
     print("Post-processing: FFmpeg when required")
+
+    return run_command(build_stream_command(stream))
+
+
+def build_stream_command(
+    stream: StreamInput, *, destination: str | None = None, telemetry: bool = False,
+) -> list[str]:
 
     command = [
         "yt-dlp",
@@ -197,6 +239,8 @@ def download_stream(stream: StreamInput) -> int:
             f"{header_name}:{header_value}",
         ])
 
-    command.append(stream.url)
-
-    return run_command(command)
+    if destination is not None:
+        command.extend(["-P", destination])
+    if telemetry:
+        command.extend(ytdlp_telemetry_options())
+    return command + [stream.url]

@@ -164,7 +164,7 @@ class GuiOptionsTests(unittest.TestCase):
 
     def test_simple_routes_have_no_options_or_execution(self):
         for kind in (InputKind.HLS, InputKind.DASH,
-                     InputKind.GENERIC_YTDLP, InputKind.STREAM_INSPECTOR):
+                     InputKind.GENERIC_YTDLP):
             self.paste(kind, f"https://example.test/{kind.name}")
             self.window.download_button.click()
             self.assertFalse(self.window._configuration_started)

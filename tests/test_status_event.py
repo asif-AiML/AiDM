@@ -32,6 +32,7 @@ class StatusEventTests(unittest.TestCase):
                                           StatusKind.COMPLETE, StatusKind.FAILED,
                                           StatusKind.ABORTING, StatusKind.ABORTED,
                                           StatusKind.DOWNLOADING_VIDEO, StatusKind.DOWNLOADING_AUDIO,
+                                          StatusKind.DOWNLOADING_SUBTITLE,
                                           StatusKind.MERGING, StatusKind.CONVERTING_AUDIO,
                                           StatusKind.REMUXING, StatusKind.FINALIZING})
 

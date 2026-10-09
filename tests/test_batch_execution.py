@@ -324,7 +324,7 @@ class BatchGuiTests(unittest.TestCase):
 
     def test_other_routes_stay_deferred(self):
         for kind in (InputKind.HLS,
-                     InputKind.DASH, InputKind.GENERIC_YTDLP, InputKind.STREAM_INSPECTOR, InputKind.TORRENT):
+                     InputKind.DASH, InputKind.GENERIC_YTDLP, InputKind.TORRENT):
             extra = {}
             urls = ('first',)
             if kind == InputKind.YOUTUBE_PLAYLIST:

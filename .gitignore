@@ -27,3 +27,5 @@ __pycache__/
 !/tests/test_gui_metadata.py
 # Persistent direct bulk execution and parallel telemetry checks (Milestone 18)
 !/tests/test_direct_bulk_execution.py
+# Persistent Inspector workflow regressions (Milestone 20)
+!/tests/test_inspector_execution.py

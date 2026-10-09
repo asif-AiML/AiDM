@@ -36,7 +36,7 @@ class DownloadJob:
     title: str | None = None
     headers: Mapping[str, str] = field(default_factory=dict)
     subtitles: tuple[str, ...] = ()
-    # Inspector context does not override the mature underlying CLI route.
+    # Inspector keeps classification context without requiring YouTube choices.
     route_kind: InputKind | None = None
     # Known size of a collection URL; URL-list bulk already has len(urls).
     item_count: int | None = None
@@ -86,7 +86,7 @@ class DownloadJob:
         bulk = self.kind in {InputKind.YOUTUBE_BULK, InputKind.DIRECT_BULK}
         if (bulk and len(self.urls) < 2) or (not bulk and len(self.urls) != 1):
             raise ValueError("Bulk jobs require multiple URLs; other jobs require exactly one input")
-        route = self.route_kind or self.kind
+        route = self.kind
         if route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK}:
             if not isinstance(self.mode, YouTubeMode):
                 raise ValueError("YouTube single/bulk requires an explicit YouTubeMode")

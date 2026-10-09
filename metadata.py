@@ -12,6 +12,10 @@ def prepare_metadata(result: InspectionResult) -> InspectionResult:
         return result
     if result.stream and result.stream.title and result.stream.title.strip():
         return replace(result, title=result.stream.title, metadata_status=MetadataStatus.AVAILABLE)
+    if result.kind == InputKind.STREAM_INSPECTOR:
+        # The browser handoff is authoritative, including an absent title.
+        return replace(result, title=result.stream.title if result.stream else None,
+                       metadata_status=MetadataStatus.NOT_REQUESTED)
     if result.route in {InputKind.YOUTUBE_BULK, InputKind.DIRECT_BULK}:
         return replace(result, item_count=len(result.urls), metadata_status=MetadataStatus.AVAILABLE)
     if result.route == InputKind.DIRECT_SINGLE:
