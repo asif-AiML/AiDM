@@ -1050,6 +1050,135 @@ URL/quality/destination/title/count snapshot. yt-dlp/aria2 own skip/resume behav
 AiDM does not delete partials. Direct bulk, HLS/DASH, Stream Inspector and other
 deferred execution routes remain deferred.
 
+
+## Milestone 18 direct bulk execution
+
+The factory now also executes `DIRECT_BULK` using `DirectBulkDownloadProcess`
+with the existing explicit `BulkMode.SEQUENTIAL` / `BulkMode.PARALLEL` choice.
+DIRECT_SINGLE and all three implemented YouTube routes retain their adapters.
+HLS/DASH, Inspector, generic yt-dlp and torrent execution remain deferred.
+The immutable DownloadJob, common DownloadProcess lifecycle, Abort/Retry,
+terminal outcomes and route-neutral frontend dispatch are reused.
+
+Shared command policy lives in `downloader.py`. Sequential uses
+`build_direct_command`; parallel GUI and CLI use
+`build_direct_bulk_parallel_command`. CLI flags, tuning, prompts, success text,
+blocking wrappers and cwd behavior are unchanged. GUI passes the snapshot
+`--dir=<destination>`; it never changes cwd or calls a blocking CLI wrapper.
+The existing exact-byte, uncolored, untruncated GUI telemetry flags stay opt-in.
+Only GUI parallel additionally uses `--console-log-level=notice` to observe live
+completion facts; these messages are parsed internally, not shown as UI text.
+
+**Sequential locked presentation:** classification → current index / total →
+current runtime filename → item-weighted aggregate bar → current-item statistics
+→ `Downloading item i of N… ⬇️` → shared Abort.
+The controller starts one aria2 invocation per URL in original order, reusing
+one QProcess only after its previous invocation finishes. Index comes from the
+controller. Filename comes exclusively from runtime `FILE:` records, with no URL
+fallback. New items clear the previous name and statistics. Existing
+`SequentialBatchProgress` computes `100 * (completed_items + current_fraction) / N`,
+or the completed baseline when percent is unknown; its high-water value never
+regresses. Speed, bytes and ETA remain current-item metrics. The first nonzero
+exit stops the batch. Advancement is queued through a zero-delay Qt timer, with
+Abort/closing checks before launching the next item, including synchronous
+signal callbacks at the handoff boundary.
+
+**Parallel locked presentation:** classification →
+`N files • X active • Y complete` → aggregate bar → aggregate statistics →
+`Downloading in parallel… ⚡` → shared Abort. There is no current index/title,
+no changing filename, and no per-item list. `ParallelBatchEvent` is a separate
+small frozen contract on the existing batch-event channel, so sequential fields
+are never overloaded. Frontend presentation depends on that structured state,
+not direct-bulk/mode checks. `ParallelBatchProgress` is Qt/engine-independent and
+must remain reusable by future workflows.
+
+Parallel retains the mature single-aria2 strategy: an input file containing the
+exact URL list and `--max-concurrent-downloads=N`. Its TemporaryDirectory belongs
+to the adapter for the full asynchronous attempt. It is removed only after exit,
+failed startup, Abort reaping, or successful close cleanup; preparation errors
+also fail cleanly and release it. The input file is not a resume database.
+
+`Aria2ParallelProgressParser` reuses bounded CR/LF framing and strict single-GID
+metric parsing. Local aria2c 1.37.0 captures in `tests/fixtures/aria2/parallel*.txt`
+verify simultaneous GIDs, exact bytes, FILE records, completion while other
+transfers continue, and final results. Whole detailed summary blocks replace
+the active GID set. Compact `[DL:...]` readouts are ignored because captured
+values can include recently completed transfers. A completion notice is matched
+to a GID through its exact runtime FILE path; final `OK` result rows also prove
+item success. Neither 100% nor disappearance from an active summary proves
+completion. Overall normal exit 0 confirms all N items; any nonzero/crashed exit
+is FAILED even if some files finished.
+
+Parallel aggregate policy:
+
+- Use byte weighting only when totals for **all N items** are known.
+- Otherwise use `(completed_count + sum(active_known_fraction)) / N`.
+  Unknown/not-started items contribute zero; completed items contribute one.
+- Keep the highest backend-derived aggregate through incomplete/reordered
+  updates and transitions between weighting policies. A transfer's 100% alone
+  never changes the completed counter or terminal lifecycle.
+- Sum speeds from the latest active snapshot, excluding completed items. If an
+  active speed is unknown, omit aggregate speed rather than imply completeness.
+- Sum observed downloaded bytes, retaining completed items. Known-size completed
+  items contribute their full size; unknown-size items retain their last observed
+  byte lower bound. Show `downloaded / total` only when the whole total is known;
+  otherwise show `X downloaded`. No size prefetch or filesystem-size guessing.
+- Omit parallel ETA entirely. Individual ETAs are not a batch ETA.
+
+Telemetry is periodic, so live counts may lag by a summary interval. A very fast
+or already-satisfied item can finish before any GID/FILE summary; an unmatched or
+ambiguous completion path waits for its GID result row or successful process exit.
+Unknown-length transfers may leave a conservative downloaded-byte lower bound.
+These cases never invent identity, size or completion. Long malformed records
+are bounded/discarded; telemetry limitations do not change exit-code authority.
+
+Both modes reuse the existing terminal summary helper: `1 file downloaded` /
+`N files downloaded`, then `Download complete 🎉💫`. FAILED/ABORTED hide all item
+identity/count claims and show the shared outcome plus Retry. Retry creates a
+fresh adapter for the **same immutable job** (URLs, mode, destination), resets
+attempt telemetry and starts from the original input list. aria2 owns skipping,
+continuation and `.aria2` state; AiDM deletes no partial download files.
+
+Local manual checks (from the repository root):
+
+```bash
+python3 tests/fixtures/aria2/serve_bulk.py
+```
+
+In another terminal:
+
+```bash
+mkdir -p /tmp/aidm-m18-sequential /tmp/aidm-m18-parallel
+python3 aidm_gui.py
+```
+
+Paste the server's four URLs, choose Sequential and the sequential destination.
+Expect positions 1/4 through 4/4, names `runtime-1.bin` through `runtime-4.bin`
+from aria2 (different from URL names), a monotonic aggregate, and current-item
+statistics. On fresh files, Abort during item 2 must stop aria2 and prevent item 3
+from starting; Retry repeats the same job and lets aria2 resume. Let it finish:
+`4 files downloaded` and the shared success banner, without a last filename.
+
+Repeat with Parallel and its separate fresh destination. Add `/5.bin` and
+`/6.bin` to exercise six files. Expect active/completed counts, summed speed,
+whole-batch bytes only once all totals are observed, and no filename/index/ETA.
+Abort while multiple files are active, verify the owned aria2 process exits,
+then Retry and finish. Use `/4.bin?unknown=1` in a fresh folder for unknown-total
+fallback: downloaded-only bytes and item-weighted progress. Replace a URL with
+`/missing.bin` for failure; no success-count summary should appear. Stop the
+fixture server with Ctrl+C afterward.
+
+Automated regressions:
+
+```bash
+QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -p 'test_direct_bulk_execution.py'
+QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests
+```
+
+These are offline model/parser/CLI-contract and Qt lifecycle/presentation tests;
+real local QProcess/aria2 transfers are validated separately. Interactive desktop
+appearance and remote-server behavior remain manual acceptance checks.
+
 ---
 
 # 18. Torrent UI scope
@@ -1285,7 +1414,8 @@ the main progress bar should represent aggregate progress for the whole job.
 
 This is a locked decision.
 
-The GUI should still display the currently active item title and queue position.
+Sequential batches display the currently active item title and queue position.
+Parallel batches show total/active/completed counts without a current item.
 
 Example:
 
@@ -1343,18 +1473,22 @@ Conceptually:
 ```text
 total downloaded bytes across active/completed jobs
 ──────────────────────────────────────────────────
-total known bytes across the batch
+total bytes only when known for every batch item
 ```
 
 Example:
 
 ```text
-Direct batch • 4 active • 10 total
+Direct batch
+10 files • 4 active • 3 complete
 
 ███████████──────── 46%
 
 22.4 MB/s • 3.1 GB / 6.8 GB
 ```
+
+When any item total is unknown, use the Milestone 18 item-weighted fallback
+and downloaded-only bytes. Sum current active speeds; omit aggregate ETA.
 
 A future expandable per-item queue may be added later if real use justifies it.
 

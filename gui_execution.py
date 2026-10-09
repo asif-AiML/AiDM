@@ -6,18 +6,20 @@ from pathlib import Path
 import signal
 import sys
 import time
+from tempfile import TemporaryDirectory
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
-from download_job import DownloadJob, VideoQuality, YouTubeMode
+from download_job import BulkMode, DownloadJob, VideoQuality, YouTubeMode
 from aria2_progress import Aria2ProgressParser
-from downloader import build_direct_command
+from aria2_parallel_progress import Aria2ParallelProgressParser, Aria2Snapshot
+from downloader import build_direct_command, build_direct_bulk_parallel_command
 from inspection import InputKind
 from status_event import StatusEvent, StatusKind, StatusReason
 from progress_event import ProgressEvent
 from youtube import build_youtube_video_command, build_youtube_audio_command, build_youtube_playlist_command
 from ytdlp_progress import YtDlpProgressParser
-from batch_event import ItemStarted, SequentialBatchProgress
+from batch_event import ItemStarted, SequentialBatchProgress, ParallelBatchProgress
 
 
 class ExecutionOutcome(Enum):
@@ -258,6 +260,128 @@ class DirectDownloadProcess(DownloadProcess):
             self.filename_resolved.emit(filename)
 
 
+class DirectBulkDownloadProcess(DownloadProcess):
+    """One owned aria2 process at a time, using the shared attempt lifecycle."""
+
+    engine = "aria2c"
+
+    def __init__(self, job: DownloadJob, parent=None):
+        if job.kind != InputKind.DIRECT_BULK:
+            raise ValueError("Direct bulk execution requires DIRECT_BULK")
+        super().__init__(job, parent)
+        self._parallel = job.bulk_mode == BulkMode.PARALLEL
+        self._index = 1
+        self._between_items = False
+        self._input_directory = None
+        self._batch = (ParallelBatchProgress(len(job.urls)) if self._parallel
+                       else SequentialBatchProgress(len(job.urls)))
+        self._progress_parser = (Aria2ParallelProgressParser(len(job.urls)) if self._parallel
+                                 else Aria2ProgressParser(self.on_filename))
+        self._next_timer = QTimer(self)
+        self._next_timer.setSingleShot(True)
+        self._next_timer.timeout.connect(self.advance)
+
+    def build_command(self):
+        if not self._parallel:
+            return build_direct_command(self.job.urls[self._index - 1], self.job.destination, telemetry=True)
+        if self._input_directory is None:
+            self._input_directory = TemporaryDirectory(prefix="aidm-gui-bulk-")
+            input_path = Path(self._input_directory.name) / "urls.txt"
+            input_path.write_text("\n".join(self.job.urls) + "\n")
+        return build_direct_bulk_parallel_command(
+            str(Path(self._input_directory.name) / "urls.txt"), len(self.job.urls),
+            self.job.destination, telemetry=True,
+        )
+
+    def start(self):
+        if self.active or self.done or self.closing:
+            return
+        self.batch_event.emit(self._batch.event if self._parallel else
+                              self._batch.start_item(ItemStarted(self._index)))
+        try:
+            super().start()
+        except OSError as error:
+            self.stderr_tail = str(error).encode()[-self.MAX_STDERR_BYTES:]
+            self.complete(ExecutionOutcome.FAILED, StatusReason.START_FAILED)
+
+    def on_filename(self, filename):
+        batch = self._batch.start_item(ItemStarted(self._index, filename))
+        if batch is not None:
+            self.batch_event.emit(batch)
+
+    def consume_stdout(self, chunk, *, final=False):
+        for event in self._progress_parser.feed(chunk, final=final):
+            if self._parallel:
+                batch, progress = (self._batch.snapshot(event.items) if isinstance(event, Aria2Snapshot)
+                                   else self._batch.finish_item(event.gid))
+                self.batch_event.emit(batch)
+                self.progress_event.emit(progress)
+            else:
+                batch = self._batch.progress(event.percent)
+                if batch is not None:
+                    self.batch_event.emit(batch)
+                self.progress_event.emit(event)
+
+    def advance(self):
+        # Yield between items so an Abort queued at the finish boundary wins.
+        if self.done or self.closing or not self._between_items:
+            return
+        if self.abort_requested:
+            self.complete(ExecutionOutcome.ABORTED)
+            return
+        self._between_items = False
+        self._index += 1
+        self._progress_parser = Aria2ProgressParser(self.on_filename)
+        self.progress_event.emit(ProgressEvent())
+        self.batch_event.emit(self._batch.start_item(ItemStarted(self._index)))
+        self.status_event.emit(StatusEvent(StatusKind.STARTING_ENGINE, self.engine))
+        # Signals can synchronously request Abort/close, too.
+        if self.abort_requested or self.closing or self.done:
+            if self.abort_requested and not self.closing:
+                self.complete(ExecutionOutcome.ABORTED)
+            return
+        command = self.build_command()
+        self.process.start(command[0], command[1:])
+
+    def abort(self):
+        super().abort()
+        if self._between_items and self.abort_requested and not self.closing:
+            self.complete(ExecutionOutcome.ABORTED)
+
+    def complete(self, outcome, reason=None):
+        if self.done:
+            return
+        if not self.closing and outcome == ExecutionOutcome.COMPLETE:
+            if not self._parallel and self._index < len(self.job.urls):
+                self._between_items = True
+                batch = self._batch.progress(100)
+                if batch is not None:
+                    self.batch_event.emit(batch)
+                if not self.done and not self.closing and not self.abort_requested:
+                    self._next_timer.start(0)
+                return
+            batch = self._batch.complete()
+            if batch is not None:
+                self.batch_event.emit(batch)
+            if self.abort_requested:
+                outcome = ExecutionOutcome.ABORTED
+        self._next_timer.stop()
+        self.cleanup_input()
+        super().complete(outcome, reason)
+
+    def cleanup_input(self):
+        if self._input_directory is not None:
+            self._input_directory.cleanup()
+            self._input_directory = None
+
+    def shutdown(self):
+        stopped = super().shutdown()
+        if stopped:
+            self._next_timer.stop()
+            self.cleanup_input()
+        return stopped
+
+
 class YouTubeDownloadProcess(DownloadProcess):
     """YouTube modes and video playlists, with one shared process attempt."""
 
@@ -331,6 +455,8 @@ def create_download_process(job: DownloadJob, parent=None) -> DownloadProcess:
     """Only implemented adapters belong here; unsupported routes stay deferred."""
     if job.kind == InputKind.DIRECT_SINGLE:
         return DirectDownloadProcess(job, parent)
+    if job.kind == InputKind.DIRECT_BULK:
+        return DirectBulkDownloadProcess(job, parent)
     if job.kind in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK, InputKind.YOUTUBE_PLAYLIST}:
         return YouTubeDownloadProcess(job, parent)
     raise UnsupportedExecution("GUI execution is not implemented for this job")

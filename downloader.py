@@ -55,6 +55,10 @@ def build_direct_command(
     url: str, destination: str | None = None, *, telemetry: bool = False,
 ) -> list[str]:
     """Shared direct-download flags; omitted destination preserves CLI cwd."""
+    return _direct_options(destination, telemetry=telemetry) + [url]
+
+
+def _direct_options(destination=None, *, telemetry=False):
     command = [
         "aria2c",
         "--continue=true",
@@ -72,8 +76,18 @@ def build_direct_command(
         ])
     if destination is not None:
         command.append(f"--dir={destination}")
-    command.append(url)
     return command
+
+
+def build_direct_bulk_parallel_command(
+    input_path: str, total: int, destination: str | None = None, *, telemetry: bool = False,
+) -> list[str]:
+    """One aria2 scheduler for all URLs; the caller owns the input file lifetime."""
+    command = _direct_options(destination, telemetry=telemetry)
+    if telemetry:
+        # Live completion notices supplement per-GID progress summaries.
+        command[command.index("--console-log-level=warn")] = "--console-log-level=notice"
+    return command + [f"--max-concurrent-downloads={total}", f"--input-file={input_path}"]
 
 
 def download_direct(url: str, destination: str | None = None) -> int:
@@ -92,17 +106,7 @@ def download_direct_bulk(urls: list[str]) -> int:
         input_path = Path(temp_dir) / "urls.txt"
         input_path.write_text("\n".join(urls) + "\n")
 
-        command = [
-            "aria2c",
-            "--continue=true",
-            "--max-connection-per-server=1",
-            "--split=1",
-            "--min-split-size=1M",
-            "--console-log-level=warn",
-            "--summary-interval=1",
-            f"--max-concurrent-downloads={total}",
-            f"--input-file={input_path}",
-        ]
+        command = build_direct_bulk_parallel_command(str(input_path), total)
 
         result = run_command(command)
 

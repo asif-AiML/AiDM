@@ -16,7 +16,7 @@ from progress_event import ProgressEvent
 
 _SIZE = r"[0-9]+(?:\.[0-9]+)?(?:KiB|MiB|GiB|B)"
 _RECORD = re.compile(
-    rf"\[#[0-9a-fA-F]{{6,16}} (?P<downloaded>{_SIZE})/(?P<total>{_SIZE})"
+    rf"\[#(?P<gid>[0-9a-fA-F]{{6,16}}) (?P<downloaded>{_SIZE})/(?P<total>{_SIZE})"
     r"(?:\((?P<percent>[0-9]+(?:\.[0-9]+)?)%\))? CN:[0-9]+"
     rf"(?: DL:(?P<speed>{_SIZE}))?(?: ETA:(?P<eta>[0-9hms]+))?\]"
 )
@@ -74,10 +74,24 @@ class Aria2ProgressParser:
         self._buffer = b""
         self._discarding = False
         self._on_filename = on_filename
+        self._after_cr = False
+
+    def parse_line(self, line):
+        if self._on_filename is not None:
+            filename = parse_aria2_filename(line)
+            if filename is not None:
+                self._on_filename(filename)
+        event = parse_aria2_progress(line)
+        return [event] if event is not None else []
 
     def feed(self, chunk: bytes, *, final: bool = False) -> list[ProgressEvent]:
         events = []
-        parts = re.split(br"[\r\n]", chunk)
+        if self._after_cr and chunk.startswith(b"\n"):
+            chunk = chunk[1:]
+            self._after_cr = False
+        if chunk:
+            self._after_cr = chunk.endswith(b"\r")
+        parts = re.split(br"\r\n|[\r\n]", chunk)
         for index, part in enumerate(parts):
             if not self._discarding:
                 if len(self._buffer) + len(part) > self.MAX_RECORD_BYTES:
@@ -89,13 +103,7 @@ class Aria2ProgressParser:
                 if not self._discarding:
                     # Decode only complete records, including split multibyte names.
                     line = self._buffer.decode(sys.getfilesystemencoding(), errors="replace")
-                    if self._on_filename is not None:
-                        filename = parse_aria2_filename(line)
-                        if filename is not None:
-                            self._on_filename(filename)
-                    event = parse_aria2_progress(line)
-                    if event is not None:
-                        events.append(event)
+                    events.extend(self.parse_line(line))
                 self._buffer = b""
                 self._discarding = False
         return events

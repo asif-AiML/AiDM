@@ -323,7 +323,7 @@ class BatchGuiTests(unittest.TestCase):
         self.assertTrue(self.window.queue_position.isHidden())
 
     def test_other_routes_stay_deferred(self):
-        for kind in (InputKind.DIRECT_BULK, InputKind.HLS,
+        for kind in (InputKind.HLS,
                      InputKind.DASH, InputKind.GENERIC_YTDLP, InputKind.STREAM_INSPECTOR, InputKind.TORRENT):
             extra = {}
             urls = ('first',)

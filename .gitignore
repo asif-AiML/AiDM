@@ -25,3 +25,5 @@ __pycache__/
 !/tests/test_batch_execution.py
 !/tests/test_playlist_execution.py
 !/tests/test_gui_metadata.py
+# Persistent direct bulk execution and parallel telemetry checks (Milestone 18)
+!/tests/test_direct_bulk_execution.py

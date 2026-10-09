@@ -37,7 +37,7 @@ from inspection import classify_input, InputKind, MetadataStatus
 from metadata import prepare_metadata
 from status_event import StatusEvent, StatusKind, StatusReason
 from progress_event import ProgressEvent
-from batch_event import BatchEvent
+from batch_event import BatchEvent, ParallelBatchEvent
 
 
 def format_batch_summary(kind: InputKind, count: int | None) -> str:
@@ -54,7 +54,7 @@ def format_batch_summary(kind: InputKind, count: int | None) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'} downloaded"
 
 
-def render_status(event: StatusEvent, batch: BatchEvent | None = None) -> str:
+def render_status(event: StatusEvent, batch: BatchEvent | ParallelBatchEvent | None = None) -> str:
     """Translate backend activity into GUI language, without changing state."""
     engine = event.engine or "download engine"
     if event.kind == StatusKind.STARTING_ENGINE:
@@ -62,6 +62,8 @@ def render_status(event: StatusEvent, batch: BatchEvent | None = None) -> str:
     if event.kind == StatusKind.FAILED and event.reason == StatusReason.START_FAILED:
         return f"Could not start {engine}. ⚠️"
     if event.kind == StatusKind.DOWNLOADING and batch is not None:
+        if isinstance(batch, ParallelBatchEvent):
+            return "Downloading in parallel… ⚡"
         return f"Downloading item {batch.current_index} of {batch.total_items}… ⬇️"
     return {
         StatusKind.DOWNLOADING: "Downloading… ⬇️",
@@ -347,7 +349,7 @@ class AiDMWindow(QMainWindow):
         self._retry_error = ""
         self._download_event: StatusEvent | None = None
         self._progress_event: ProgressEvent | None = None
-        self._batch_event: BatchEvent | None = None
+        self._batch_event: BatchEvent | ParallelBatchEvent | None = None
         self._runtime_filename: str | None = None
         self._quality_generation = 0
         self._quality_worker = None
@@ -549,7 +551,7 @@ class AiDMWindow(QMainWindow):
             self.set_state(self.current_state)
 
     @Slot(object)
-    def on_batch_event(self, event: BatchEvent):
+    def on_batch_event(self, event: BatchEvent | ParallelBatchEvent):
         if (not self._closing and self.current_state == GuiState.DOWNLOADING
                 and self.sender() is self._download_process
                 and not self._download_process.abort_requested):
@@ -785,6 +787,7 @@ class AiDMWindow(QMainWindow):
         )
         title = result.title if result else None
         batch = self._batch_event if downloading or terminal else None
+        parallel_batch = isinstance(batch, ParallelBatchEvent)
         # The attempted immutable job is authoritative even after failure/abort.
         job = self._download_process.job if self._download_process and self._download_event else None
         identity_kind = job.kind if job else result.route if result else None
@@ -807,14 +810,20 @@ class AiDMWindow(QMainWindow):
         summary = format_batch_summary(identity_kind, summary_count) if terminal_batch and state == GuiState.COMPLETE else ""
         self.batch_summary.setText(summary)
         self.batch_summary.setVisible(bool(summary))
-        if collection_identity:
+        if parallel_batch:
+            title = None
+        elif collection_identity:
             title = batch.title if batch is not None and downloading else None
         elif batch is not None:
             # Runtime item identity replaces generic/first-item inspection data.
             title = batch.title
         elif not title and (downloading or terminal):
             title = self._runtime_filename
-        self.queue_position.setText(f"{batch.current_index} / {batch.total_items}" if batch else "")
+        self.queue_position.setText(
+            f"{batch.total_items} files • {batch.active_items} active • {batch.completed_items} complete"
+            if parallel_batch else f"{batch.current_index} / {batch.total_items}" if batch else ""
+        )
+        self.queue_position.setAccessibleName("Batch summary" if parallel_batch else "Current batch position")
         self.queue_position.setVisible(downloading and batch is not None)
         title_font = QFont(self._media_title_font)
         if batch is not None:
@@ -863,7 +872,8 @@ class AiDMWindow(QMainWindow):
         if collection_identity and batch is None:
             percent = None  # A stream percent is not a playlist aggregate.
         self.progress.setAccessibleName("Batch progress" if batch else "Download progress")
-        self.statistics.setToolTip("Current item/stream statistics" if batch else "")
+        self.statistics.setToolTip("Whole batch statistics" if parallel_batch else
+                                   "Current item/stream statistics" if batch else "")
         if percent is None:
             self.progress.reset()
         else:
