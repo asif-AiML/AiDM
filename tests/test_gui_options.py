@@ -91,6 +91,49 @@ class GuiOptionsTests(unittest.TestCase):
         self.assertTrue(self.window.download_button.isHidden())
         return self.workers[-1]
 
+    def assert_tab_cycle(self, controls):
+        controls[0].setFocus()
+        for expected in controls[1:] + controls[:1]:
+            QTest.keyClick(self.window.focusWidget(), Qt.Key.Key_Tab)
+            self.assertIs(self.window.focusWidget(), expected)
+            self.assertTrue(expected.isVisible())
+            self.assertTrue(expected.isEnabled())
+
+    def test_youtube_options_follow_visual_keyboard_order(self):
+        self.paste()
+        self.window.input_field.setFocus()
+        worker = self.video()
+        self.assertIs(self.window.focusWidget(), self.window.input_field)
+        worker.finished.emit(worker.revision, [720, 1080])
+        self.window.quality_choice.setCurrentIndex(1)
+        window = self.window
+        self.assert_tab_cycle([window.input_field, window.mode_buttons[YouTubeMode.VIDEO],
+                               window.quality_choice, window.destination_field,
+                               window.browse_button, window.download_button])
+        window.mode_buttons[YouTubeMode.VIDEO].setFocus()
+        QTest.keyClick(window.focusWidget(), Qt.Key.Key_Right)
+        self.assertTrue(window.mode_buttons[YouTubeMode.ORIGINAL_AUDIO].isChecked())
+        self.assert_tab_cycle([window.input_field, window.mode_buttons[YouTubeMode.ORIGINAL_AUDIO],
+                               window.destination_field, window.browse_button, window.download_button])
+        window.input_field.clear()
+        QTest.keyClick(window.focusWidget() or window, Qt.Key.Key_Tab)
+        self.assertIs(window.focusWidget(), window.input_field)
+
+    def test_bulk_options_follow_visual_keyboard_order(self):
+        self.paste(InputKind.DIRECT_BULK, "https://example.test/a.zip https://example.test/b.zip")
+        window = self.window
+        window.download_button.click()
+        # With no selection, the first radio is the native group tab stop.
+        self.assert_tab_cycle([window.input_field, window.bulk_buttons[BulkMode.SEQUENTIAL],
+                               window.destination_field, window.browse_button])
+        window.bulk_buttons[BulkMode.SEQUENTIAL].setFocus()
+        QTest.keyClick(window.focusWidget(), Qt.Key.Key_Space)
+        self.assertTrue(window.bulk_buttons[BulkMode.SEQUENTIAL].isChecked())
+        QTest.keyClick(window.focusWidget(), Qt.Key.Key_Right)
+        self.assertTrue(window.bulk_buttons[BulkMode.PARALLEL].isChecked())
+        self.assert_tab_cycle([window.input_field, window.bulk_buttons[BulkMode.PARALLEL],
+                               window.destination_field, window.browse_button, window.download_button])
+
     def test_single_video_intent_quality_and_no_execution(self):
         self.paste()
         self.assertEqual(self.workers, [])

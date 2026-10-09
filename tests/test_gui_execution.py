@@ -163,6 +163,96 @@ class GuiExecutionTests(unittest.TestCase):
             self.window.on_download_intent()
         return self.window._download_process.process, events, sequence
 
+    def test_launch_focus_and_direct_tab_order(self):
+        window = self.window
+        self.assertIs(window.focusWidget(), window.input_field)
+        self.inspect()
+        self.assertIs(window.focusWidget(), window.input_field)
+        order = [window.input_field, window.destination_field,
+                 window.browse_button, window.download_button]
+        for expected in order[1:] + order[:1]:
+            QTest.keyClick(window.focusWidget(), Qt.Key.Key_Tab)
+            self.assertIs(window.focusWidget(), expected)
+        for expected in reversed(order):
+            QTest.keyClick(window.focusWidget(), Qt.Key.Key_Backtab)
+            self.assertIs(window.focusWidget(), expected)
+
+    def test_active_and_terminal_focus_and_enter_safety(self):
+        window = self.window
+        for outcome in ("failed", "aborted", "complete"):
+            with self.subTest(outcome=outcome):
+                process = self.start()
+                for _ in range(3):
+                    QTest.keyClick(window.focusWidget() or window, Qt.Key.Key_Tab)
+                    self.assertIs(window.focusWidget(), window.abort_button)
+                    self.assertTrue(window.focusWidget().isVisible())
+                    self.assertTrue(window.focusWidget().isEnabled())
+                for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    QTest.keyClick(window.abort_button, key)
+                self.assertNotIn("terminate", process.calls)
+                if outcome == "aborted":
+                    window.abort_button.click()
+                else:
+                    process.finish(7 if outcome == "failed" else 0)
+                action = window.open_folder_button if outcome == "complete" else window.retry_button
+                window.input_field.setFocus()
+                QTest.keyClick(window.input_field, Qt.Key.Key_Tab)
+                self.assertIs(window.focusWidget(), action)
+                with patch("aidm_gui.QDesktopServices.openUrl") as opener:
+                    for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                        QTest.keyClick(action, key)
+                    opener.assert_not_called()
+                self.assertIs(window._download_process.process, process)
+                self.assertTrue(action.isVisible())
+                self.assertTrue(window.rect().contains(action.mapTo(window, action.rect().bottomRight())))
+                window.input_field.clear()
+                QTest.keyClick(window.focusWidget() or window, Qt.Key.Key_Tab)
+                self.assertIs(window.focusWidget(), window.input_field)
+
+    def test_focused_option_leaves_traversal_when_download_starts(self):
+        self.inspect(InputKind.DIRECT_BULK)
+        window = self.window
+        window.download_button.click()
+        option = window.bulk_buttons[BulkMode.SEQUENTIAL]
+        option.setFocus()
+        QTest.keyClick(option, Qt.Key.Key_Space)
+        self.assertEqual(window.current_state, GuiState.READY)
+        QTest.keyClick(option, Qt.Key.Key_Return)
+        self.assertEqual(window.current_state, GuiState.DOWNLOADING)
+        self.assertFalse(option.isVisible())
+        for _ in range(3):
+            QTest.keyClick(window.focusWidget() or window, Qt.Key.Key_Tab)
+            self.assertIs(window.focusWidget(), window.abort_button)
+        window.abort_button.click()
+
+    def test_aborting_disabled_button_does_not_trap_focus(self):
+        window = self.window
+        process = self.start()
+        process.stop_on_terminate = False
+        window.abort_button.setFocus()
+        window.abort_button.click()
+        self.assertFalse(window.abort_button.isEnabled())
+        for _ in range(3):
+            QTest.keyClick(window.focusWidget() or window, Qt.Key.Key_Tab)
+            focused = window.focusWidget()
+            self.assertTrue(focused is None or (focused.isVisible() and focused.isEnabled()))
+        process.finish(15)
+        window.input_field.setFocus()
+        QTest.keyClick(window.input_field, Qt.Key.Key_Tab)
+        self.assertIs(window.focusWidget(), window.retry_button)
+
+    def test_progress_appearance_preserved_across_states(self):
+        window = self.window
+        stylesheet = window.progress.styleSheet()
+        palette = window.progress.palette()
+        font = window.progress.font()
+        for state in GuiState:
+            window.preview_state(state)
+            self.assertEqual(window.progress.styleSheet(), stylesheet)
+            self.assertEqual(window.progress.palette(), palette)
+            self.assertEqual(window.progress.font(), font)
+        self.assertEqual(window.styleSheet(), "")
+
     def test_open_folder_visibility_and_retry_cleanup(self):
         window = self.window
         for state in (GuiState.EMPTY, GuiState.INSPECTING, GuiState.NEEDS_OPTIONS,
