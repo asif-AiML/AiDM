@@ -358,6 +358,17 @@ class AiDMWindow(QMainWindow):
         layout.addStretch()
 
         self.setCentralWidget(content)
+        # Match visual order across dynamically revealed sections. Qt skips
+        # hidden/disabled controls and preserves native radio-group navigation.
+        tab_order = (
+            self.input_field, *self.mode_buttons.values(), *self.bulk_buttons.values(),
+            self.quality_choice, self.destination_field, self.browse_button,
+            self.download_button, self.abort_button, self.retry_button,
+            self.open_folder_button,
+        )
+        for current, following in zip(tab_order, tab_order[1:]):
+            QWidget.setTabOrder(current, following)
+
         self.input_result = validate_gui_input("")
         self.inspection_result = None
         self.inspection_error = ""

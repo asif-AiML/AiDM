@@ -183,12 +183,26 @@ This progressive reveal behavior is a central design rule.
 The visual direction favors:
 
 - a modest rectangular application window;
-- rounded content elements;
+- existing subtle content rounding where already present;
 - a clean input field;
 - a colorized progress bar;
-- rounded buttons;
+- native Qt controls;
 - restrained use of spacing;
 - minimal visual noise.
+
+Milestone 22 is a conservative interaction/spacing audit, not a visual redesign.
+Launch input focus was already correct and remains unchanged. An explicit tab
+chain follows the visible layout: input, applicable mode group, quality,
+destination, Browse, Download, then the applicable active/terminal action.
+Native radio groups retain arrow/Space navigation. Qt skips hidden and disabled
+controls; no forced state-transition focus changes or new shortcuts are needed.
+Existing Enter intent semantics, compact refitting, spacing, and font hierarchy
+remain unchanged after the audit.
+
+Native Qt/Linux theming remains intentional. The existing accepted green progress
+bar is unchanged; no palette or progress styling is added. Global rounded-control
+styling is intentionally not implemented. Desktop-theme appearance still requires
+a visual check on the user's desktop; offscreen tests use their own Qt theme.
 
 For the first GUI version, native Linux window chrome should be preferred instead of immediately implementing a fully custom frameless window.
 
