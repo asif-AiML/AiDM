@@ -1780,25 +1780,23 @@ This keeps the active view clean.
 
 # 34. Completion state
 
-The GUI should not require a modal completion dialog.
-
-A simple in-window completion state is preferred.
-
-Example:
+Milestone 21 implements the centered in-window success presentation:
 
 ```text
-✓ Download complete
-```
+Download complete 🎉💫
 
-A future action such as:
-
-```text
 [ Open Folder ]
 ```
 
-may be useful.
+Existing single, batch, playlist, and Inspector terminal identities remain intact.
+Open Folder appears only in COMPLETE and targets the completed attempt's immutable
+`DownloadJob.destination`, using Qt native folder opening. It never auto-opens,
+uses a runtime filename, or reads the mutable destination selector.
 
-The exact completion controls can be refined during implementation.
+The destination must still exist as a directory. An unavailable directory or a
+native opening failure shows a small non-terminal warning; COMPLETE and its
+success message remain intact. No fallback folder is opened or recreated.
+New input and new attempts hide the action and clear its warning.
 
 ---
 
@@ -1811,12 +1809,13 @@ Conceptually:
 ```text
 Download failed
 
-[ Retry ]   [ Details ]
+[ Retry ]
 ```
 
 The main message should be human-readable.
 
-Technical output may be exposed through a Details view if necessary.
+FAILED and ABORTED retain the existing Retry action and immutable-job retry semantics.
+Details diagnostics remain deferred beyond Milestone 21.
 
 This preserves useful debugging information without turning the primary GUI into a terminal emulator.
 

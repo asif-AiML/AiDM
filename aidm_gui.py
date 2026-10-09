@@ -8,8 +8,8 @@ import os
 from pathlib import Path
 from threading import Thread
 
-from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QFont, QKeySequence, QShortcut
+from PySide6.QtCore import QObject, QSettings, Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -304,6 +304,13 @@ class AiDMWindow(QMainWindow):
         self.abort_button.clicked.connect(self.abort_download)
         self.retry_button = QPushButton("Retry")
         self.retry_button.clicked.connect(self.retry_download)
+        self.open_folder_button = QPushButton("Open Folder")
+        self.open_folder_button.clicked.connect(self.open_download_folder)
+        self.folder_warning = QLabel()
+        self.folder_warning.setTextFormat(Qt.TextFormat.PlainText)
+        self.folder_warning.setWordWrap(True)
+        self.folder_warning.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.folder_warning.setAccessibleName("Folder warning")
         self.result_message = QLabel()
         self.result_message.setTextFormat(Qt.TextFormat.PlainText)
         self.result_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -336,11 +343,13 @@ class AiDMWindow(QMainWindow):
             self.active_status,
             self.download_button,
             self.result_message,
+            self.open_folder_button,
+            self.folder_warning,
             self.workflow_warning,
             self.abort_button,
             self.retry_button,
         ):
-            if widget is self.retry_button:
+            if widget in (self.retry_button, self.open_folder_button):
                 layout.addWidget(widget, alignment=Qt.AlignmentFlag.AlignHCenter)
             elif widget is self.abort_button:
                 layout.addWidget(widget, alignment=Qt.AlignmentFlag.AlignRight)
@@ -537,6 +546,26 @@ class AiDMWindow(QMainWindow):
         if (self.current_state in {GuiState.FAILED, GuiState.ABORTED}
                 and self._retry_job is not None and not self.download_active()):
             self.start_download(self._retry_job, retry=True)
+
+    def open_download_folder(self):
+        process = self._download_process
+        if (self.current_state != GuiState.COMPLETE or process is None
+                or self._download_event is None
+                or self._download_event.kind != StatusKind.COMPLETE):
+            return
+        destination = process.job.destination
+        try:
+            available = Path(destination).is_dir()
+        except OSError:
+            available = False
+        if not available:
+            warning = "Download folder is unavailable. 📁⚠️"
+        elif not QDesktopServices.openUrl(QUrl.fromLocalFile(destination)):
+            warning = "Could not open download folder. 📁⚠️"
+        else:
+            warning = ""
+        self.folder_warning.setText(warning)
+        self.folder_warning.setVisible(bool(warning))
 
     @Slot(object)
     def on_download_status(self, event: StatusEvent):
@@ -949,6 +978,15 @@ class AiDMWindow(QMainWindow):
         abort_visible = downloading and self.download_active() and process.can_abort
         self.abort_button.setVisible(abort_visible)
         self.abort_button.setEnabled(abort_visible and not process.abort_requested)
+        self.open_folder_button.setVisible(state == GuiState.COMPLETE)
+        self.open_folder_button.setEnabled(
+            state == GuiState.COMPLETE and process is not None
+            and self._download_event is not None
+            and self._download_event.kind == StatusKind.COMPLETE
+        )
+        if state != GuiState.COMPLETE:
+            self.folder_warning.clear()
+            self.folder_warning.hide()
         self.retry_button.setVisible(
             state in {GuiState.FAILED, GuiState.ABORTED} and self._retry_job is not None
         )

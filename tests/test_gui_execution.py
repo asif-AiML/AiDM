@@ -163,6 +163,119 @@ class GuiExecutionTests(unittest.TestCase):
             self.window.on_download_intent()
         return self.window._download_process.process, events, sequence
 
+    def test_open_folder_visibility_and_retry_cleanup(self):
+        window = self.window
+        for state in (GuiState.EMPTY, GuiState.INSPECTING, GuiState.NEEDS_OPTIONS,
+                      GuiState.READY):
+            window.preview_state(state)
+            self.assertTrue(window.open_folder_button.isHidden())
+        process = self.start()
+        self.assertTrue(window.open_folder_button.isHidden())
+        process.finish(7)
+        self.assertTrue(window.open_folder_button.isHidden())
+        self.assertTrue(window.retry_button.isVisible())
+        job = window._download_process.job
+        window.retry_button.click()
+        self.assertIs(window._download_process.job, job)
+        self.assertTrue(window.open_folder_button.isHidden())
+        window.abort_button.click()
+        self.assertEqual(window.current_state, GuiState.ABORTED)
+        self.assertTrue(window.open_folder_button.isHidden())
+        self.assertTrue(window.retry_button.isVisible())
+        window.retry_button.click()
+        self.assertTrue(window.open_folder_button.isHidden())
+        with patch("aidm_gui.QDesktopServices.openUrl") as opener:
+            window._download_process.process.finish()
+            opener.assert_not_called()  # Completion never auto-opens.
+        self.assertTrue(window.open_folder_button.isVisible())
+        self.assertTrue(window.retry_button.isHidden())
+        window.input_field.clear()
+        self.assertTrue(window.open_folder_button.isHidden())
+
+    def test_open_folder_uses_attempt_destination_and_native_local_url(self):
+        folder = self.directory / "download space # percent% ü"
+        folder.mkdir()
+        self.window.destination = str(folder)
+        process = self.start()
+        self.window._download_process.filename_resolved.emit("unrelated-file.zip")
+        process.finish()
+        self.window.destination = str(self.directory / "different")
+        self.window.download_job = None
+        with patch("aidm_gui.QDesktopServices.openUrl", return_value=True) as opener:
+            self.window.open_folder_button.click()
+        url = opener.call_args.args[0]
+        self.assertTrue(url.isLocalFile())
+        self.assertEqual(url.toLocalFile(), str(folder))
+        self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+        self.assertEqual(self.window.result_message.text(), "Download complete 🎉💫")
+        self.assertTrue(self.window.folder_warning.isHidden())
+
+    def test_open_folder_unavailable_or_file_keeps_success(self):
+        folder = self.directory / "removed"
+        folder.mkdir()
+        self.window.destination = str(folder)
+        self.start().finish()
+        folder.rmdir()
+        with patch("aidm_gui.QDesktopServices.openUrl") as opener:
+            for replaced_by_file in (False, True):
+                if replaced_by_file:
+                    folder.write_text("not a directory")
+                self.window.open_folder_button.click()
+                self.assertEqual(self.window.folder_warning.text(),
+                                 "Download folder is unavailable. 📁⚠️")
+                self.assertTrue(self.window.folder_warning.isVisible())
+                self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+                self.assertEqual(self.window.result_message.text(), "Download complete 🎉💫")
+                self.assertTrue(self.window.open_folder_button.isVisible())
+                self.assertTrue(self.window.retry_button.isHidden())
+            opener.assert_not_called()
+        self.window.input_field.clear()
+        self.assertTrue(self.window.folder_warning.isHidden())
+        self.assertEqual(self.window.folder_warning.text(), "")
+
+    def test_native_open_failure_is_nonterminal_and_can_be_retried(self):
+        self.start().finish()
+        with patch("aidm_gui.QDesktopServices.openUrl", return_value=False):
+            self.window.open_folder_button.click()
+        self.assertEqual(self.window.folder_warning.text(),
+                         "Could not open download folder. 📁⚠️")
+        self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+        self.assertEqual(self.window.result_message.text(), "Download complete 🎉💫")
+        with patch("aidm_gui.QDesktopServices.openUrl", return_value=True):
+            self.window.open_folder_button.click()
+        self.assertTrue(self.window.folder_warning.isHidden())
+
+    def test_open_folder_all_supported_job_kinds_share_destination(self):
+        class FixtureProcess(DownloadProcess):
+            engine = "fixture"
+
+            def build_command(self):
+                return ["fixture-engine"]
+
+        base = DownloadJob(InputKind.DIRECT_SINGLE, ("https://example.test/media",),
+                           str(self.directory))
+        jobs = [base,
+                replace(base, kind=InputKind.DIRECT_BULK, urls=base.urls * 2,
+                        bulk_mode=BulkMode.SEQUENTIAL),
+                replace(base, kind=InputKind.YOUTUBE_SINGLE,
+                        mode=YouTubeMode.ORIGINAL_AUDIO, title="Video title"),
+                replace(base, kind=InputKind.YOUTUBE_BULK, urls=base.urls * 2,
+                        mode=YouTubeMode.ORIGINAL_AUDIO),
+                replace(base, kind=InputKind.YOUTUBE_PLAYLIST, video_quality=720,
+                        title="Playlist title", item_count=3),
+                replace(base, kind=InputKind.STREAM_INSPECTOR,
+                        route_kind=InputKind.HLS, title="Extension title")]
+        with patch("aidm_gui.create_download_process", side_effect=FixtureProcess), \
+                patch("aidm_gui.QDesktopServices.openUrl", return_value=True) as opener:
+            for job in jobs:
+                with self.subTest(kind=job.kind):
+                    self.window.start_download(job)
+                    self.window._download_process.process.finish()
+                    self.window.open_folder_button.click()
+                    self.assertEqual(opener.call_args.args[0].toLocalFile(), job.destination)
+                    self.assertTrue(self.window.open_folder_button.isVisible())
+                    self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+
     def test_successful_semantic_event_order_and_single_completion_presentation(self):
         process, events, sequence = self.start_with_events()
         self.assertEqual(events, [StatusEvent(StatusKind.STARTING_ENGINE, "aria2c")])
