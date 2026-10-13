@@ -1168,7 +1168,7 @@ This remains separate from yt-dlp `--fragment-retries`, which is handled by the 
 
 ---
 
-### 7.3 Fragment retry count
+### 7.3 Stream fragment retries — LOCKED DESIGN
 
 Relevant yt-dlp option:
 
@@ -1176,15 +1176,171 @@ Relevant yt-dlp option:
 --fragment-retries
 ```
 
-Friendly setting:
+Friendly control:
 
 ```text
 Stream fragment retries
 ```
 
-This is specifically useful for fragmented HLS/DASH media.
+This setting applies specifically to HLS/DASH media downloaded by yt-dlp's native fragment downloader.
 
-It controls how persistent yt-dlp should be when individual fragments temporarily fail.
+Its purpose is reliability: if an individual media fragment fails temporarily, yt-dlp can retry that fragment instead of giving up immediately.
+
+This is especially useful on weak or unstable networks.
+
+#### Locked choices
+
+The first version should expose:
+
+```text
+Auto — Recommended
+5 — Balanced
+10 — Persistent
+20 — Very persistent
+```
+
+#### Auto — Recommended
+
+Auto preserves yt-dlp's normal fragment retry behavior.
+
+AiDM should not add an explicit `--fragment-retries` value when Auto is selected.
+
+This keeps the engine's proven default behavior unless the user explicitly asks for a more persistent policy.
+
+#### 5 — Balanced
+
+A moderate manual retry policy.
+
+Useful when the user wants some added resilience without making permanently unavailable fragments wait too long.
+
+#### 10 — Persistent
+
+A stronger retry policy.
+
+Useful for:
+
+- unstable Wi-Fi;
+- weak mobile connections;
+- temporary packet loss;
+- streaming servers that occasionally fail individual fragment requests.
+
+#### 20 — Very persistent
+
+The strongest fragment-retry value exposed in the first version.
+
+Useful when successful completion matters more than failing quickly.
+
+Trade-off:
+
+A permanently unavailable fragment can take considerably longer to give up.
+
+#### Backend mapping
+
+When the user selects an explicit numeric value:
+
+```text
+5
+→ --fragment-retries 5
+
+10
+→ --fragment-retries 10
+
+20
+→ --fragment-retries 20
+```
+
+When Auto is selected:
+
+```text
+do not add an explicit --fragment-retries override
+```
+
+#### Applicability
+
+Applies to:
+
+```text
+Browser-assisted HLS/DASH using yt-dlp native fragments    yes
+Future naked HLS/DASH GUI path using yt-dlp native         yes
+```
+
+Does not apply to:
+
+```text
+Direct single                                               no
+Direct bulk sequential                                      no
+Direct bulk parallel                                        no
+Normal YouTube transfers delegated to aria2c                no
+Other aria2c-backed transfers                               no
+```
+
+#### Relationship to Retry attempts
+
+This control is separate from the general Retry attempts setting.
+
+```text
+Retry attempts
+→ broader download / connection retry policy
+
+Stream fragment retries
+→ retry one failed HLS/DASH media fragment
+```
+
+Example:
+
+```text
+fragment 527 fails
+→ retry fragment 527
+→ if it succeeds, continue downloading the stream
+```
+
+This separation gives users more resilience without confusing general network retries with per-fragment recovery.
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Stream fragment retries
+
+Controls how many times AiDM retries an individual HLS/DASH
+fragment when it fails.
+
+Higher values can improve the chance of completing long streams
+on weak or unstable connections, but a permanently unavailable
+fragment will take longer to give up.
+
+Auto — Recommended keeps yt-dlp's normal fragment retry
+behavior. 5 is balanced, 10 is persistent, and 20 is very
+persistent.
+
+This setting affects only browser-assisted HLS/DASH downloads
+handled by yt-dlp's native fragment downloader.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+No long unstable-network test is required.
+
+Implementation-phase checks only need to verify:
+
+```text
+Auto
+→ no explicit --fragment-retries override
+
+5
+→ --fragment-retries 5
+
+10
+→ --fragment-retries 10
+
+20
+→ --fragment-retries 20
+```
+
+A real weak-network HLS/DASH test is useful later, but not required to validate the first implementation.
 
 ---
 
