@@ -1,7 +1,7 @@
 # AiDM Advanced Download Controls — Design Notes
 
 > **Status:** Draft / discussion document  
-> **Branch:** `feat/gui`  
+> **Branch:** `feat/controls-settings`  
 > **Purpose:** Define safe, GUI-friendly control over selected yt-dlp and aria2c behavior before implementation.
 
 ---
@@ -231,7 +231,7 @@ They should be based on testing rather than assuming that higher values automati
 
 ## 6. Important aria2c controls
 
-### 6.1 Connections per file
+### 6.1 Connections per file — LOCKED DESIGN
 
 Relevant aria2c options:
 
@@ -240,30 +240,231 @@ Relevant aria2c options:
 --max-connection-per-server
 ```
 
-These options are closely related.
+These two options are treated as **one user-facing control**.
 
-Exposing them separately to a non-technical user would create confusion, so AiDM should likely expose one friendly setting:
+The GUI must not expose them as two independent settings.
+
+Friendly control:
 
 ```text
 Connections per file
 ```
 
-AiDM can translate the selected value into an appropriate combination of:
+When the user selects a numeric value `N`, AiDM should apply the corresponding aria2c connection policy together:
 
 ```text
 --split=N
 --max-connection-per-server=N
 ```
 
-Expected effect:
+This prevents confusing combinations such as:
 
-- `1`: one connection, most conservative;
-- higher values: multiple pieces of the same file can download simultaneously;
-- may improve large-file throughput;
-- may provide no benefit on already-fast or connection-limited servers;
-- very high values may cause server throttling or connection rejection.
+```text
+--split=8
+--max-connection-per-server=1
+```
 
-This is a strong candidate for the first version.
+where the GUI claims a high connection setting but aria2c is still limited to one connection per server.
+
+#### Locked choices
+
+The first version should expose:
+
+```text
+Auto — Recommended
+1 — Maximum compatibility
+4 — Balanced
+8 — Best performance
+```
+
+Do not expose `16` in the first version.
+
+The goal is to provide useful control without encouraging excessively aggressive connection counts.
+
+#### Auto — Recommended
+
+`Auto` does **not** mean random or adaptive benchmarking.
+
+It means:
+
+```text
+preserve AiDM's proven route-specific connection defaults
+```
+
+Current proven behavior:
+
+```text
+Direct single
+Direct bulk sequential
+Direct bulk parallel
+    → 1 connection per file
+
+Normal YouTube transfers delegated to aria2c
+    → 8 connections per file
+```
+
+This is the default and recommended choice because enabling the new Settings feature must not silently change already-tested download behavior for users who never touch the setting.
+
+#### 1 — Maximum compatibility
+
+Meaning:
+
+```text
+one file
+→ one connection
+```
+
+Expected behavior:
+
+- least aggressive;
+- generally safest with restrictive servers;
+- useful when higher connection counts cause failures or throttling;
+- may be slower when a server limits throughput per connection.
+
+#### 4 — Balanced
+
+Meaning:
+
+```text
+one file
+→ up to four simultaneous pieces/connections
+```
+
+Expected behavior:
+
+- moderate segmented downloading;
+- useful manual choice for users who want additional speed without using the strongest exposed setting;
+- may improve throughput on large files;
+- still depends on server and network behavior.
+
+#### 8 — Best performance
+
+Meaning:
+
+```text
+one file
+→ up to eight simultaneous pieces/connections
+```
+
+Expected behavior:
+
+- strongest performance-oriented value exposed by AiDM in the first version;
+- can improve throughput when a server benefits from parallel connections;
+- is **not** a promise that every download will be faster;
+- some servers may restrict, throttle or reject multiple simultaneous connections.
+
+The label `Best performance` means:
+
+> the strongest generally useful performance-oriented setting intentionally exposed by AiDM,
+
+not:
+
+> universally guaranteed fastest value for every server.
+
+#### Why 16 is intentionally omitted
+
+Higher values can create diminishing returns and much larger total connection counts when combined with parallel bulk downloading.
+
+Example:
+
+```text
+6 parallel files × 16 connections per file
+≈ up to 96 simultaneous connections
+```
+
+That is unnecessarily aggressive for a beginner-facing first version.
+
+The safe first-version ceiling is therefore:
+
+```text
+8 connections per file
+```
+
+#### Internal minimum split size
+
+Current AiDM uses:
+
+```text
+--min-split-size=1M
+```
+
+This should remain an internal implementation detail for now.
+
+Do not expose it as a separate GUI control in the first version.
+
+#### Applicability
+
+This control applies only when **aria2c is actually transferring the bytes**.
+
+Applies to:
+
+```text
+Direct single                         yes
+Direct bulk sequential                yes
+Direct bulk parallel                  yes
+Normal YouTube transfer via aria2c    yes
+Other aria2c-backed media transfers   yes
+```
+
+Does not apply to:
+
+```text
+yt-dlp-native browser-assisted HLS/DASH fragment transfer
+```
+
+The fact that yt-dlp participates in a route does not automatically make yt-dlp the transfer engine.
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Connections per file
+
+Controls how many parts of one file aria2c can download at the
+same time. More connections can improve speed when a server
+limits each connection, but some servers restrict multiple
+connections.
+
+Auto — Recommended keeps AiDM's tested setting for each
+download type. 1 offers maximum compatibility, 4 is balanced,
+and 8 is the performance-oriented choice.
+
+This setting applies only when aria2c performs the download.
+It does not affect native HLS/DASH streams downloaded by
+yt-dlp.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+A long benchmark session is **not required** for this control.
+
+Because `8` is already used successfully in AiDM's established aria2-backed YouTube path, the main new validation needed later is a short direct-download sanity test.
+
+Suggested implementation-phase check:
+
+```text
+same stable large direct URL
+
+1 connection  → run briefly
+4 connections → run briefly
+8 connections → run briefly
+```
+
+About 30–45 seconds per run is sufficient.
+
+The goal is not to prove universal speed rankings.
+
+The goal is only to verify:
+
+- segmented downloading works;
+- each value is actually passed to aria2c;
+- no obvious failure appears;
+- higher settings remain operational and sane.
+
+Full-file completion is not required solely for validating this setting.
 
 ---
 
@@ -789,13 +990,10 @@ Before implementation, decide:
 1. Exact profile names.
 2. Exact default profile.
 3. Exact numeric values for Conservative / Balanced / Fast.
-4. Which values deserve the labels:
-   - Recommended
-   - Best performance
+4. Which values deserve the labels `Recommended` and `Best performance` for the remaining controls. (`Connections per file` is already locked.)
 5. Safe maximum for:
-   - connections per file;
    - parallel files;
-   - fragment concurrency.
+   - fragment concurrency. (`Connections per file` is locked at 8.)
 6. Whether settings should expose presets only or presets + Custom mode.
 7. Whether changing a single control automatically switches the profile to Custom.
 8. Whether high combined connection counts should show a warning.
