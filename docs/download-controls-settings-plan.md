@@ -468,7 +468,7 @@ Full-file completion is not required solely for validating this setting.
 
 ---
 
-### 6.2 Parallel files
+### 6.2 Parallel files — LOCKED DESIGN
 
 Relevant aria2c option:
 
@@ -476,42 +476,185 @@ Relevant aria2c option:
 --max-concurrent-downloads
 ```
 
-This controls the number of separate files aria2c downloads at the same time.
-
-It is particularly relevant to:
+This control applies only to:
 
 ```text
 Direct bulk → Parallel
 ```
 
-Friendly setting:
+Friendly control:
 
 ```text
 Parallel files
 ```
 
+#### Locked choices
+
+The first version should expose:
+
+```text
+2 — Conservative
+4 — Recommended
+```
+
+The default/recommended value is:
+
+```text
+4
+```
+
+No higher values are needed in the first version.
+
+The goal is a simple queue model rather than exposing every possible aria2 concurrency value.
+
+#### Queue behavior
+
 Example:
 
 ```text
-20 files total
-4 parallel files
-
-→ 4 active
-→ remaining files wait
+10 files total
+4 active
+2 complete
+4 waiting
 ```
 
-This is different from connections per file.
-
-Both values interact.
-
-For example:
+Displayed compactly in the GUI as:
 
 ```text
-4 parallel files × 8 connections per file
-≈ up to 32 simultaneous connections
+10 files • 4 active • 2 complete • 4 waiting
 ```
 
-AiDM must avoid unsafe combinations and should warn or constrain settings when necessary.
+When one active file completes:
+
+```text
+one waiting file starts
+→ active count returns to 4
+```
+
+until the queue is exhausted.
+
+#### Backend mapping
+
+If the user selects:
+
+```text
+Parallel files = 4
+```
+
+AiDM should apply:
+
+```text
+--max-concurrent-downloads=4
+```
+
+If the user selects:
+
+```text
+Parallel files = 2
+```
+
+AiDM should apply:
+
+```text
+--max-concurrent-downloads=2
+```
+
+#### Interaction with Connections per file
+
+These two controls operate at different levels and are not contradictory:
+
+```text
+Parallel files
+→ number of separate files active at once
+
+Connections per file
+→ number of connections one active file may use
+```
+
+Example:
+
+```text
+Parallel files = 4
+Connections per file = 4
+
+→ 4 active files
+→ up to 4 connections per file
+→ up to about 16 simultaneous connections
+```
+
+With the first-version maximum Connections per file value:
+
+```text
+Parallel files = 4
+Connections per file = 8
+
+→ up to about 32 simultaneous connections
+```
+
+This is the accepted first-version ceiling.
+
+No extra warning system or dynamic conflict resolution is required beyond keeping Parallel files capped at 4 and Connections per file capped at 8.
+
+#### Applicability
+
+Applies to:
+
+```text
+Direct bulk → Parallel    yes
+```
+
+Does not apply to:
+
+```text
+Direct single             no
+Direct bulk → Sequential  no
+YouTube single            no
+YouTube bulk              no
+YouTube playlist          no
+HLS/DASH                  no
+```
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Parallel files
+
+Controls how many files download at the same time in Direct Bulk
+→ Parallel mode.
+
+With 4 selected, up to 4 files download while the rest wait.
+When one finishes, the next waiting file starts.
+
+This works together with Connections per file. For example,
+4 parallel files with 4 connections each can use up to about
+16 connections.
+
+This setting affects only Direct Bulk → Parallel downloads.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+No long performance benchmark is required.
+
+A short behavior test with several small direct URLs is enough.
+
+Suggested implementation-phase checks:
+
+```text
+Parallel files = 2
+→ verify 2 active and the remainder waiting
+
+Parallel files = 4
+→ verify 4 active and the remainder waiting
+```
+
+Also verify that when one active file completes, the next waiting file starts automatically.
+
+The purpose is to validate queue behavior and command wiring, not to benchmark total throughput.
 
 ---
 
