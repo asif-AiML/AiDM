@@ -121,6 +121,24 @@ Connections per file
 
 The tooltip should avoid unnecessary backend jargon.
 
+It should also state **where the setting actually takes effect**.
+
+A user must never assume that every yt-dlp-related setting affects every job that happens to involve yt-dlp. AiDM often uses yt-dlp only for extraction/selection and then hands the actual transfer to aria2c.
+
+Example:
+
+```text
+Concurrent stream fragments
+
+ⓘ Affects browser-assisted HLS/DASH downloads where yt-dlp's
+   native fragment downloader transfers the media.
+
+   It does not affect direct downloads or normal YouTube jobs
+   that AiDM hands to aria2c.
+```
+
+Likewise, aria2c controls should say that they apply to jobs where aria2c performs the transfer.
+
 Advanced users may optionally see the underlying engine option in smaller secondary text later, but that is not required for the first version.
 
 ---
@@ -593,43 +611,157 @@ Settings should not merely affect UI presentation.
 
 Not every setting applies to every download type.
 
-Examples:
+The key rule is:
 
-### Direct file
+```text
+the engine mentioned in the route
+is not necessarily
+the engine transferring the bytes
+```
+
+AiDM must apply settings according to the **actual transfer engine**.
+
+### Current GUI transfer model
+
+#### Direct single
+
+```text
+URL
+→ aria2c transfers the file
+```
+
+Relevant settings:
 
 ```text
 Connections per file      applies
-Parallel files            not relevant to single file
-Stream fragment settings  not relevant
 Speed limit               applies
-Retries                   applies
+Retry attempts             applies
+Parallel files            not relevant
+Stream fragment settings  not relevant
 ```
 
-### Direct bulk parallel
+#### Direct bulk — sequential
+
+```text
+URLs
+→ one aria2c transfer at a time
+```
+
+Relevant settings:
+
+```text
+Connections per file      applies
+Speed limit               applies
+Retry attempts             applies
+Parallel files            not relevant
+Stream fragment settings  not relevant
+```
+
+#### Direct bulk — parallel
+
+```text
+URLs
+→ aria2c schedules and transfers multiple files
+```
+
+Relevant settings:
 
 ```text
 Connections per file      applies
 Parallel files            applies
 Speed limit               applies
-Retries                   applies
+Retry attempts             applies
+Stream fragment settings  not relevant
 ```
 
-### HLS/DASH native yt-dlp
+#### YouTube single / bulk / playlist
+
+Current AiDM architecture is conceptually:
 
 ```text
-Stream fragment concurrency applies
-Fragment retries             applies
-yt-dlp speed limit           applies
-aria2 split settings         not relevant
+yt-dlp
+→ extracts formats / metadata / media URLs
+→ aria2c performs the ordinary media transfer where supported
+→ FFmpeg merges/remuxes/converts when required
 ```
 
-### YouTube
+For the current normal YouTube workflows, the performance controls that matter to the byte transfer are therefore primarily the **aria2c controls**.
 
-Behavior depends on whether yt-dlp delegates the actual transfer to aria2c or uses a native fragmented downloader.
+Relevant settings:
 
-AiDM should apply only the settings relevant to the engine/path actually being used.
+```text
+Connections per file      applies when aria2c is the selected transfer path
+Speed limit               applies through aria2c transfer settings
+Retry attempts             applies according to the actual stage/engine
+Parallel files            not the same as YouTube bulk queue behavior
+Stream fragment settings  normally not relevant to the ordinary aria2c handoff
+```
 
-The user should not need to understand this distinction.
+Do not present yt-dlp fragment concurrency as a normal YouTube speed control merely because yt-dlp starts the job.
+
+#### Browser-assisted HLS/DASH
+
+Current Inspector stream architecture is conceptually:
+
+```text
+browser context
+→ yt-dlp
+→ native HLS/DASH fragment downloader
+```
+
+This is where yt-dlp native fragment controls have their clearest direct effect.
+
+Relevant settings:
+
+```text
+Concurrent stream fragments  applies
+Stream fragment retries      applies
+yt-dlp speed limit           applies
+aria2 split settings         do not control the native fragment transfer
+Parallel files               not relevant
+```
+
+The current GUI's strongest yt-dlp-native use case is therefore the browser-assisted HLS/DASH workflow.
+
+#### Browser-assisted non-HLS/DASH media
+
+If the Inspector route ultimately uses yt-dlp as an extractor and delegates the actual transfer to aria2c, aria2c transfer controls apply instead.
+
+AiDM should decide this internally from the actual command path.
+
+### Naked HLS/DASH
+
+Naked HLS/DASH remains a CLI capability, while its GUI execution milestone is currently deferred.
+
+If exposed in the GUI later, the same yt-dlp-native rules should apply when yt-dlp's native HLS/DASH downloader performs the transfer.
+
+### User-facing rule
+
+The user should not need to understand the backend routing graph.
+
+Each `ⓘ` explanation should explicitly say where the setting works.
+
+For example:
+
+```text
+Connections per file
+
+ⓘ Used for downloads handled by aria2c, including direct files
+   and normal YouTube transfers. It does not change native
+   HLS/DASH fragment downloading.
+```
+
+and:
+
+```text
+Concurrent stream fragments
+
+ⓘ Used for browser-assisted HLS/DASH streams downloaded by
+   yt-dlp's native fragment downloader. It does not affect
+   direct files or normal YouTube transfers handled by aria2c.
+```
+
+AiDM should apply only the settings relevant to the engine/path actually doing the transfer.
 
 ---
 
