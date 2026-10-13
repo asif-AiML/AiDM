@@ -184,48 +184,199 @@ The GUI should never imply that a higher number is always better.
 
 ---
 
-## 5. Preset/profile idea
+## 5. Performance profiles — LOCKED DESIGN
 
-A higher-level download profile may sit above individual controls.
+Profiles are **preset bundles of already-defined controls**.
 
-Possible concept:
+They do not introduce new backend behavior.
+
+Profiles apply only to the three performance/concurrency controls:
+
+```text
+Connections per file
+Parallel files
+Concurrent stream fragments
+```
+
+The following settings remain independent and are **not changed by a performance profile**:
+
+```text
+Download speed limit
+Retry attempts
+Stream fragment retries
+```
+
+This prevents a user from accidentally losing a bandwidth cap or reliability preference simply because they switched performance profile.
+
+### Locked profiles
+
+```text
+Conservative
+Balanced
+Fast
+Custom
+```
+
+#### Conservative
+
+```text
+Connections per file        = 1
+Parallel files              = 2
+Concurrent stream fragments = 1
+```
+
+Intent:
+
+- lowest concurrency;
+- maximum compatibility;
+- least aggressive network/server behavior.
+
+#### Balanced
+
+```text
+Connections per file        = 4
+Parallel files              = 4
+Concurrent stream fragments = 4
+```
+
+Intent:
+
+- moderate concurrency;
+- strong general-purpose performance;
+- safe middle ground.
+
+#### Fast
+
+```text
+Connections per file        = 8
+Parallel files              = 4
+Concurrent stream fragments = 8
+```
+
+Intent:
+
+- strongest performance-oriented preset exposed by AiDM;
+- keeps Parallel files capped at 4;
+- respects the first-version accepted aria2 ceiling:
+
+```text
+4 parallel files × 8 connections per file
+≈ up to 32 simultaneous aria2 connections
+```
+
+This profile does not imply guaranteed maximum speed on every server.
+
+#### Custom
+
+Custom means the user has manually selected one or more of the three performance controls.
+
+Example:
+
+```text
+Balanced selected
+→ 4 / 4 / 4
+
+user changes Connections per file to 8
+→ profile becomes Custom
+```
+
+If the user later selects Balanced again:
+
+```text
+→ restore 4 / 4 / 4
+```
+
+### Auto and profiles
+
+The individual Connections per file control includes:
+
+```text
+Auto — Recommended
+```
+
+Auto remains a valid individual setting.
+
+However, profiles intentionally use explicit numeric values rather than Auto.
+
+Reason:
+
+```text
+Auto
+→ preserve AiDM's route-specific proven defaults
+
+Profile
+→ deliberately apply a known performance preset
+```
+
+These are different concepts and should remain separate.
+
+### Profile interaction rule
+
+Selecting a profile should immediately set the three performance controls to that profile's locked values.
+
+Changing any one of those three controls manually should switch the profile indicator to:
+
+```text
+Custom
+```
+
+Changing:
+
+```text
+Download speed limit
+Retry attempts
+Stream fragment retries
+```
+
+must **not** switch the performance profile to Custom because those controls are outside the profile bundle.
+
+### Persistence
+
+The selected profile and the underlying control values should persist through QSettings.
+
+Conceptually:
+
+```text
+performance_profile
+connections_per_file
+parallel_files
+fragment_concurrency
+```
+
+The persisted values must remain internally consistent.
+
+### First-version profile table
+
+| Profile | Connections per file | Parallel files | Concurrent stream fragments |
+|---|---:|---:|---:|
+| Conservative | 1 | 2 | 1 |
+| Balanced | 4 | 4 | 4 |
+| Fast | 8 | 4 | 8 |
+| Custom | user-selected | user-selected | user-selected |
+
+### Information text
+
+The first-version profile `ⓘ` explanation should communicate:
 
 ```text
 Download profile
 
-● Balanced
-○ Conservative
-○ Fast
-○ Custom
+Quickly applies a preset to AiDM's performance controls.
+
+Conservative uses the lowest concurrency for maximum
+compatibility.
+
+Balanced uses moderate concurrency for general use.
+
+Fast uses AiDM's strongest first-version performance settings.
+
+Custom appears when you manually change one of the performance
+controls.
+
+Profiles do not change your speed limit or retry settings.
 ```
 
-Possible meanings:
-
-### Conservative
-
-- fewer simultaneous connections;
-- low fragment concurrency;
-- lower parallelism;
-- maximum compatibility/reliability.
-
-### Balanced
-
-- moderate parallelism;
-- safe general-purpose defaults;
-- intended default profile.
-
-### Fast
-
-- higher but still tested concurrency;
-- intended for users who want stronger performance and have a stable connection/server.
-
-### Custom
-
-- user directly controls the individual values.
-
-The exact numeric values are **not locked yet**.
-
-They should be based on testing rather than assuming that higher values automatically mean higher speed.
+The wording may be polished during final GUI implementation, but the meaning above is locked.
 
 ---
 
