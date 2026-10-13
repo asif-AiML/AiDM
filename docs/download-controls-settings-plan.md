@@ -331,11 +331,46 @@ This prevents a user from accidentally losing a bandwidth cap or reliability pre
 ### Locked profiles
 
 ```text
+AiDM Default
 Conservative
 Balanced
 Fast
 Custom
 ```
+
+### AiDM Default
+
+`AiDM Default` is the special initial/reset profile.
+
+It exists because `Connections per file = Auto` preserves route-specific proven AiDM behavior and therefore does not fit cleanly inside the fixed numeric Conservative / Balanced / Fast presets.
+
+Locked values:
+
+```text
+Connections per file        = Auto
+Parallel files              = 4
+Concurrent stream fragments = 4
+```
+
+Intent:
+
+- preserve existing AiDM route-specific connection behavior where already proven;
+- use the recommended first-version concurrency values for the other performance controls;
+- provide a clear, truthful default state rather than pretending Auto / 4 / 4 is Balanced.
+
+For Connections per file, Auto means:
+
+```text
+Direct single
+Direct bulk sequential
+Direct bulk parallel
+→ 1 connection/file
+
+Normal YouTube transfers delegated to aria2c
+→ 8 connections/file
+```
+
+This profile is the default on a brand-new installation and the target restored by Restore Defaults.
 
 #### Conservative
 
@@ -388,7 +423,7 @@ This profile does not imply guaranteed maximum speed on every server.
 
 #### Custom
 
-Custom means the user has manually selected one or more of the three performance controls.
+Custom is the dynamic state used when the three performance controls do not exactly match one of the named presets.
 
 Example:
 
@@ -397,14 +432,38 @@ Balanced selected
 → 4 / 4 / 4
 
 user changes Connections per file to 8
+→ 8 / 4 / 4
+
+this does not match a named preset
 → profile becomes Custom
 ```
 
-If the user later selects Balanced again:
+### Exact profile matching
+
+The profile indicator should be derived from the current three performance values.
+
+If they exactly match a named profile, the UI should show that profile rather than unnecessarily remaining on Custom.
+
+Examples:
 
 ```text
-→ restore 4 / 4 / 4
+Auto / 4 / 4
+→ AiDM Default
+
+1 / 2 / 1
+→ Conservative
+
+4 / 4 / 4
+→ Balanced
+
+8 / 4 / 8
+→ Fast
+
+anything else
+→ Custom
 ```
+
+This means a user can manually return to a known preset combination and AiDM will recognize it automatically.
 
 ### Auto and profiles
 
@@ -414,9 +473,7 @@ The individual Connections per file control includes:
 Auto — Recommended
 ```
 
-Auto remains a valid individual setting.
-
-However, profiles intentionally use explicit numeric values rather than Auto.
+Auto remains a valid individual setting and is intentionally part of the special AiDM Default profile.
 
 Reason:
 
@@ -424,20 +481,26 @@ Reason:
 Auto
 → preserve AiDM's route-specific proven defaults
 
-Profile
-→ deliberately apply a known performance preset
-```
+AiDM Default
+→ preserve that Auto behavior while using recommended values
+   for the other performance controls
 
-These are different concepts and should remain separate.
+Conservative / Balanced / Fast
+→ deliberately apply explicit numeric performance presets
+```
 
 ### Profile interaction rule
 
-Selecting a profile should immediately set the three performance controls to that profile's locked values.
+Selecting a named profile should immediately set the three performance controls to that profile's locked values.
 
-Changing any one of those three controls manually should switch the profile indicator to:
+Changing any one of those three controls manually should trigger profile re-evaluation:
 
 ```text
-Custom
+exact named combination
+→ show matching named profile
+
+otherwise
+→ Custom
 ```
 
 Changing:
@@ -448,11 +511,11 @@ Retry attempts
 Stream fragment retries
 ```
 
-must **not** switch the performance profile to Custom because those controls are outside the profile bundle.
+must **not** change the performance profile because those controls are outside the profile bundle.
 
 ### Persistence
 
-The selected profile and the underlying control values should persist through QSettings.
+The selected/derived profile and underlying control values should persist through QSettings.
 
 Conceptually:
 
@@ -465,14 +528,35 @@ fragment_concurrency
 
 The persisted values must remain internally consistent.
 
+The underlying control values are the source of truth; the profile label can be re-derived from them on startup.
+
 ### First-version profile table
 
 | Profile | Connections per file | Parallel files | Concurrent stream fragments |
 |---|---:|---:|---:|
+| AiDM Default | Auto | 4 | 4 |
 | Conservative | 1 | 2 | 1 |
 | Balanced | 4 | 4 | 4 |
 | Fast | 8 | 4 | 8 |
 | Custom | user-selected | user-selected | user-selected |
+
+### Restore Defaults baseline
+
+Restore Defaults should restore the complete first-version settings state to:
+
+```text
+Profile                     = AiDM Default
+
+Connections per file        = Auto
+Parallel files              = 4
+Concurrent stream fragments = 4
+
+Download speed limit        = Unlimited
+Retry attempts              = Auto
+Stream fragment retries     = Auto
+```
+
+This gives Restore Defaults a precise and stable meaning.
 
 ### Information text
 
@@ -483,6 +567,10 @@ Download profile
 
 Quickly applies a preset to AiDM's performance controls.
 
+AiDM Default preserves AiDM's proven route-specific behavior
+while using the recommended values for the other performance
+controls.
+
 Conservative uses the lowest concurrency for maximum
 compatibility.
 
@@ -490,8 +578,8 @@ Balanced uses moderate concurrency for general use.
 
 Fast uses AiDM's strongest first-version performance settings.
 
-Custom appears when you manually change one of the performance
-controls.
+Custom appears when the current performance controls do not
+match a named preset.
 
 Profiles do not change your speed limit or retry settings.
 ```
