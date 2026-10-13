@@ -541,13 +541,16 @@ class YouTubeDownloadProcess(DownloadProcess):
             height = None if self.job.video_quality == VideoQuality.BEST else self.job.video_quality
             command = build_youtube_video_command(height, **options)
         else:
-            command = build_youtube_audio_command(wav=self.job.mode == YouTubeMode.WAV, **options)
+            command = build_youtube_audio_command(audio_format=self.job.audio_format,
+                                                  embed_thumbnail=self.job.embed_thumbnail, **options)
         # This adapter cannot execute a playlist, even if a URL contains list=.
         return command + ["--no-playlist", "--", *self.job.urls]
 
     def consume_stdout(self, chunk, *, final=False):
         for event in self._progress_parser.feed(chunk, final=final):
-            if isinstance(event, ItemStarted):
+            if isinstance(event, WorkflowWarning):
+                self.warning_event.emit(event)
+            elif isinstance(event, ItemStarted):
                 if (self._batch is None and self.job.kind == InputKind.YOUTUBE_PLAYLIST
                         and event.total_items is not None):
                     self._batch = SequentialBatchProgress(event.total_items)
@@ -568,7 +571,7 @@ class YouTubeDownloadProcess(DownloadProcess):
                 self.progress_event.emit(event)
             else:
                 if (event.kind == StatusKind.DOWNLOADING
-                        and self.job.mode in {YouTubeMode.ORIGINAL_AUDIO, YouTubeMode.WAV}):
+                        and self.job.audio_format is not None):
                     event = StatusEvent(StatusKind.DOWNLOADING_AUDIO, self.engine)
                 if event != self._last_status:
                     self._last_status = event

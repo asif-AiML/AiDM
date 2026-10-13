@@ -62,17 +62,17 @@ class YouTubeQualityTests(unittest.TestCase):
         self.assertIn("Could not determine YouTube video qualities; using best available quality.", self.output.getvalue())
 
     def test_audio_and_wav_skip_quality_and_preserve_commands(self):
-        for selection, extra in [("2", []), ("3", ["--extract-audio", "--audio-format", "wav"])]:
+        for selection, extra in [(["2", "1", "n"], []), (["2", "4"], ["--extract-audio", "--audio-format", "wav"])]:
             for urls in [["first"], ["first", "second"]]:
                 with self.subTest(selection=selection, urls=urls), \
-                        patch("builtins.input", return_value=selection) as prompt, \
+                        patch("builtins.input", side_effect=selection) as prompt, \
                         patch.object(youtube, "get_available_youtube_qualities") as discover, \
                         patch.object(youtube, "choose_youtube_quality") as choose, \
                         patch.object(youtube, "run_command", return_value=0) as run:
                     self.assertEqual(youtube.download_youtube(urls), 0)
                     discover.assert_not_called()
                     choose.assert_not_called()
-                    prompt.assert_called_once()
+                    self.assertEqual(prompt.call_count, len(selection))
                     run.assert_called_once_with(
                         youtube.build_youtube_command(len(urls)) + ["-f", "bestaudio/best"] + extra + urls
                     )

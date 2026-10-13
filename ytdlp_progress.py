@@ -12,6 +12,7 @@ from aria2_progress import parse_aria2_progress
 from progress_event import ProgressEvent
 from status_event import StatusEvent, StatusKind
 from batch_event import ItemStarted
+from workflow_warning import WorkflowWarning
 
 
 DOWNLOAD_PREFIX = "AIDM_PROGRESS:"
@@ -42,11 +43,13 @@ def _number(value):
     return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
 
 
-def parse_ytdlp_record(line: str) -> list[StatusEvent | ProgressEvent | ItemStarted]:
+def parse_ytdlp_record(line: str) -> list[StatusEvent | ProgressEvent | ItemStarted | WorkflowWarning]:
     """Only recognize our sentinels or the existing strict aria2 record format."""
     if len(line) > YtDlpProgressParser.MAX_RECORD_BYTES:
         return []
     try:
+        if line == "AIDM_ARTWORK_WARNING:skipped":
+            return [WorkflowWarning.ARTWORK_FAILED]
         if line.startswith(ITEM_PREFIX):
             data = json.loads(line[len(ITEM_PREFIX):])
             if not isinstance(data, dict):
@@ -61,6 +64,9 @@ def parse_ytdlp_record(line: str) -> list[StatusEvent | ProgressEvent | ItemStar
             kind = {
                 "Merger": StatusKind.MERGING,
                 "ExtractAudio": StatusKind.CONVERTING_AUDIO,
+                "AiDMThumbnail": StatusKind.EMBEDDING_THUMBNAIL,
+                "EmbedThumbnail": StatusKind.EMBEDDING_THUMBNAIL,
+                "Metadata": StatusKind.FINALIZING,
                 "VideoRemuxer": StatusKind.REMUXING,
                 "MoveFiles": StatusKind.FINALIZING,
             }.get(data.get("postprocessor"))

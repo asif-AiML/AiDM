@@ -13,6 +13,7 @@ from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from download_job import DownloadJob, YouTubeMode, BulkMode, VideoQuality, build_download_job
+from download_job import AudioFormat, DownloadJob, YouTubeMode, BulkMode, VideoQuality, build_download_job
 from gui_input import validate_gui_input
 from gui_execution import create_download_process, ExecutionOutcome, UnsupportedExecution
 from gui_metadata import MetadataProcess
@@ -43,6 +44,7 @@ from workflow_warning import WorkflowWarning
 
 def render_warning(warning: WorkflowWarning) -> str:
     return {
+        WorkflowWarning.ARTWORK_FAILED: "Audio downloaded; artwork was unavailable for one or more items ⚠️",
         WorkflowWarning.SUBTITLE_FAILED: "Subtitle could not be downloaded ⚠️",
         WorkflowWarning.MULTIPLE_SUBTITLES_SKIPPED: "Multiple subtitles are not supported yet — subtitles skipped ⚠️",
         WorkflowWarning.SUBTITLE_WITHOUT_TITLE: "Subtitle skipped — no title was supplied ⚠️",
@@ -81,6 +83,7 @@ def render_status(event: StatusEvent, batch: BatchEvent | ParallelBatchEvent | N
         StatusKind.DOWNLOADING_SUBTITLE: "Downloading subtitle… 📄",
         StatusKind.MERGING: "Merging audio and video… 🧩",
         StatusKind.CONVERTING_AUDIO: "Converting audio… 🎛️",
+        StatusKind.EMBEDDING_THUMBNAIL: "Embedding thumbnail… 🖼️",
         StatusKind.REMUXING: "Remuxing video… 🧩",
         StatusKind.FINALIZING: "Finalizing… ⚙️",
         StatusKind.COMPLETE: "Download complete 🎉💫",
@@ -252,10 +255,24 @@ class AiDMWindow(QMainWindow):
         self.item_count = QLabel()
         self.mode_options, self.mode_group, self.mode_buttons = self.make_options(
             "Download as", {
-                YouTubeMode.VIDEO: "Video", YouTubeMode.ORIGINAL_AUDIO: "Original Audio",
-                YouTubeMode.WAV: "WAV",
+                YouTubeMode.VIDEO: "Video", YouTubeMode.AUDIO: "Audio",
             }, self.on_mode_changed,
         )
+        self.audio_options, self.audio_group, self.audio_buttons = self.make_options(
+            "Audio Format", {AudioFormat.ORIGINAL: "Original Best", AudioFormat.FLAC: "FLAC",
+                             AudioFormat.MP3: "MP3", AudioFormat.WAV: "WAV"},
+            self.on_audio_changed,
+        )
+        self.audio_options.setToolTip("FLAC and WAV conversion cannot restore quality lost in the source audio.")
+        self.thumbnail_options = QWidget()
+        thumbnail_layout = QVBoxLayout(self.thumbnail_options)
+        thumbnail_layout.setContentsMargins(0, 0, 0, 0)
+        self.thumbnail_choice = QCheckBox("Embed YouTube thumbnail")
+        self.thumbnail_choice.toggled.connect(self.on_thumbnail_changed)
+        self.thumbnail_help = QLabel()
+        self.thumbnail_help.setWordWrap(True)
+        thumbnail_layout.addWidget(self.thumbnail_choice)
+        thumbnail_layout.addWidget(self.thumbnail_help)
         self.bulk_options, self.bulk_group, self.bulk_buttons = self.make_options(
             "Download mode", {BulkMode.SEQUENTIAL: "Sequential", BulkMode.PARALLEL: "Parallel"},
             self.on_bulk_changed,
@@ -335,6 +352,8 @@ class AiDMWindow(QMainWindow):
             self.batch_summary,
             self.item_count,
             self.mode_options,
+            self.audio_options,
+            self.thumbnail_options,
             self.bulk_options,
             self.quality_options,
             self.destination_section,
@@ -361,7 +380,8 @@ class AiDMWindow(QMainWindow):
         # Match visual order across dynamically revealed sections. Qt skips
         # hidden/disabled controls and preserves native radio-group navigation.
         tab_order = (
-            self.input_field, *self.mode_buttons.values(), *self.bulk_buttons.values(),
+            self.input_field, *self.mode_buttons.values(), *self.audio_buttons.values(),
+            self.thumbnail_choice, *self.bulk_buttons.values(),
             self.quality_choice, self.destination_field, self.browse_button,
             self.download_button, self.abort_button, self.retry_button,
             self.open_folder_button,
@@ -484,11 +504,14 @@ class AiDMWindow(QMainWindow):
     def reset_configuration(self):
         self.cancel_quality()
         self.clear_quality()
-        for group in (self.mode_group, self.bulk_group):
+        for group in (self.mode_group, self.bulk_group, self.audio_group):
             group.setExclusive(False)
             for button in group.buttons():
                 button.setChecked(False)
             group.setExclusive(True)
+        self.thumbnail_choice.blockSignals(True)
+        self.thumbnail_choice.setChecked(False)
+        self.thumbnail_choice.blockSignals(False)
         self.download_job = None
         self._configuration_started = False
         self._configuration_error = ""
@@ -630,10 +653,37 @@ class AiDMWindow(QMainWindow):
             return
         self.cancel_quality()
         self.clear_quality()
+        self.audio_group.setExclusive(False)
+        for button in self.audio_group.buttons():
+            button.setChecked(False)
+        self.audio_group.setExclusive(True)
+        self.thumbnail_choice.blockSignals(True)
+        self.thumbnail_choice.setChecked(False)
+        self.thumbnail_choice.blockSignals(False)
         self._execution_deferred = False
         if self.mode_buttons[YouTubeMode.VIDEO].isChecked():
             self.start_quality()
         else:
+            self.update_configuration()
+
+    def on_audio_changed(self):
+        audio_format = next((value for value, button in self.audio_buttons.items() if button.isChecked()), None)
+        supported = audio_format not in (None, AudioFormat.WAV)
+        if not supported:
+            self.thumbnail_choice.blockSignals(True)
+            self.thumbnail_choice.setChecked(False)
+            self.thumbnail_choice.blockSignals(False)
+        self.thumbnail_choice.setEnabled(supported)
+        helper = ("WAV cover artwork is not broadly compatible." if audio_format == AudioFormat.WAV else
+                  "Artwork depends on the original container; the audio format stays unchanged."
+                  if audio_format == AudioFormat.ORIGINAL else "")
+        self.thumbnail_help.setText(helper)
+        self.thumbnail_help.setVisible(bool(helper))
+        self.thumbnail_choice.setToolTip(helper)
+        self.update_configuration()
+
+    def on_thumbnail_changed(self):
+        if self._configuration_started:
             self.update_configuration()
 
     def on_bulk_changed(self):
@@ -684,12 +734,14 @@ class AiDMWindow(QMainWindow):
             self.set_state(GuiState.READY)
             return
         mode = next((value for value, button in self.mode_buttons.items() if button.isChecked()), None)
+        audio_format = next((value for value, button in self.audio_buttons.items() if button.isChecked()), None)
         bulk = next((value for value, button in self.bulk_buttons.items() if button.isChecked()), None)
         quality = self.quality_choice.currentData()
         route = self.inspection_result.kind
         missing = (
             self._quality_pending
             or (route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK} and mode is None)
+            or (mode == YouTubeMode.AUDIO and audio_format is None)
             or ((route == InputKind.YOUTUBE_PLAYLIST or mode == YouTubeMode.VIDEO) and quality is None)
             or (route == InputKind.DIRECT_BULK and bulk is None)
         )
@@ -698,6 +750,7 @@ class AiDMWindow(QMainWindow):
                 self.download_job = build_download_job(
                     self.inspection_result, destination=self.checked_destination(),
                     mode=mode, video_quality=quality, bulk_mode=bulk,
+                    audio_format=audio_format, embed_thumbnail=self.thumbnail_choice.isChecked(),
                 )
             except ValueError as error:
                 self._configuration_error = str(error)
@@ -762,6 +815,8 @@ class AiDMWindow(QMainWindow):
         self, *, mode: YouTubeMode | None = None,
         video_quality: int | VideoQuality | None = None,
         bulk_mode: BulkMode | None = None,
+        audio_format: AudioFormat | None = None,
+        embed_thumbnail: bool = False,
     ) -> DownloadJob:
         """Temporary development helper: return a job without state changes/execution."""
         if (self._closing or self.inspection_result is None
@@ -772,6 +827,7 @@ class AiDMWindow(QMainWindow):
         return build_download_job(
             self.inspection_result, destination=self.checked_destination(), mode=mode,
             video_quality=video_quality, bulk_mode=bulk_mode,
+            audio_format=audio_format, embed_thumbnail=embed_thumbnail,
         )
 
     def start_metadata(self) -> None:
@@ -926,6 +982,10 @@ class AiDMWindow(QMainWindow):
         configuring = self._configuration_started and state in {GuiState.READY, GuiState.NEEDS_OPTIONS}
         route = result.kind if result else None
         self.mode_options.setVisible(configuring and route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK})
+        audio_visible = (configuring and route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK}
+                         and self.mode_buttons[YouTubeMode.AUDIO].isChecked())
+        self.audio_options.setVisible(audio_visible)
+        self.thumbnail_options.setVisible(audio_visible and self.audio_group.checkedButton() is not None)
         self.bulk_options.setVisible(configuring and route == InputKind.DIRECT_BULK)
         self.quality_options.setVisible(configuring and not self._quality_pending
                                         and self.quality_choice.count() > 1)
@@ -1009,9 +1069,9 @@ class AiDMWindow(QMainWindow):
         self.result_message.setVisible(state in {GuiState.COMPLETE, GuiState.FAILED, GuiState.ABORTED})
         self.workflow_warning.setText(render_warning(self._workflow_warning) if self._workflow_warning else "")
         self.workflow_warning.setVisible(terminal and self._workflow_warning is not None)
-        if previous_state != state and state in {
+        if (configuring and route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK}) or (previous_state != state and state in {
             GuiState.DOWNLOADING, GuiState.COMPLETE, GuiState.FAILED, GuiState.ABORTED,
-        }:
+        }):
             # Collapse space left by configuration/telemetry without resizing on
             # every progress update or changing the user's chosen window width.
             self.centralWidget().layout().activate()

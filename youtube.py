@@ -1,6 +1,8 @@
 import json
 import subprocess
+from pathlib import Path
 
+from download_job import AudioFormat, validate_audio_options
 from downloader import ARIA2_DOWNLOADER_ARGUMENTS, ARIA2_GUI_TELEMETRY_ARGUMENTS
 from utils import run_command
 from ytdlp_progress import ITEM_TEMPLATE, PLAYLIST_ITEM_TEMPLATE, ytdlp_telemetry_options
@@ -113,10 +115,9 @@ def choose_youtube_mode() -> str:
     while True:
         print("\nYouTube download options:")
         print("1 - Download Video")
-        print("2 - Download Audio (Original Best Quality)")
-        print("3 - Download Audio (Convert to WAV)")
+        print("2 - Download Audio")
 
-        choice = input("Select option [1/2/3]: ").strip()
+        choice = input("Select option [1/2]: ").strip()
 
         if choice == "1":
             return "video"
@@ -124,10 +125,29 @@ def choose_youtube_mode() -> str:
         if choice == "2":
             return "audio"
 
-        if choice == "3":
-            return "wav"
+        print("Invalid option. Enter 1 or 2.")
 
-        print("Invalid option. Enter 1, 2 or 3.")
+
+def choose_youtube_audio_options() -> tuple[AudioFormat, bool]:
+    formats = list(AudioFormat)
+    print("\nAudio format:\n1 - Original Best\n2 - FLAC\n3 - MP3\n4 - WAV")
+    print("FLAC and WAV conversion cannot restore quality lost in the source audio.")
+    while True:
+        choice = input("Select format [1/2/3/4]: ").strip()
+        if choice in {"1", "2", "3", "4"}:
+            audio_format = formats[int(choice) - 1]
+            break
+        print("Invalid option. Enter 1, 2, 3 or 4.")
+    if audio_format == AudioFormat.WAV:
+        print("WAV cover artwork is not broadly compatible; thumbnail embedding disabled.")
+        return audio_format, False
+    if audio_format == AudioFormat.ORIGINAL:
+        print("Artwork depends on the original container; unsupported containers stay unchanged.")
+    while True:
+        choice = input("Embed YouTube thumbnail? [y/N]: ").strip().lower()
+        if choice in {"", "n", "no", "y", "yes"}:
+            return audio_format, choice in {"y", "yes"}
+        print("Invalid option. Enter y or n.")
 
 
 def build_youtube_command(
@@ -183,12 +203,29 @@ def build_youtube_video_command(
 def build_youtube_audio_command(
     total_videos: int | None = None, *, wav: bool = False,
     destination: str | None = None, telemetry: bool = False,
+    audio_format: AudioFormat = AudioFormat.ORIGINAL, embed_thumbnail: bool = False,
 ) -> list[str]:
-    """Share the mature original-audio and WAV paths with frontends."""
+    """Shared format policy; optional artwork never changes the audio container."""
+    if wav:
+        if audio_format not in {AudioFormat.ORIGINAL, AudioFormat.WAV}:
+            raise ValueError("wav conflicts with audio_format")
+        audio_format = AudioFormat.WAV
+    validate_audio_options(audio_format, embed_thumbnail)
     command = build_youtube_command(total_videos, destination=destination, telemetry=telemetry)
     command.extend(["-f", "bestaudio/best"])
-    if wav:
-        command.extend(["--extract-audio", "--audio-format", "wav"])
+    if audio_format != AudioFormat.ORIGINAL:
+        command.extend(["--extract-audio", "--audio-format", audio_format.value])
+    if audio_format == AudioFormat.MP3:
+        command.extend(["--audio-quality", "0"])
+    if audio_format in {AudioFormat.FLAC, AudioFormat.MP3} or embed_thumbnail:
+        command.append("--embed-metadata")
+    if embed_thumbnail:
+        # Built-in --embed-thumbnail can remux WebM to MKV and fail the media
+        # job on artwork errors. Run our optional wrapper after audio conversion.
+        command.extend([
+            "--plugin-dirs", str(Path(__file__).resolve().parent / "ytdlp_plugins"),
+            "--use-postprocessor", "AiDMThumbnail:when=after_move" + (";telemetry=true" if telemetry else ""),
+        ])
     return command
 
 
@@ -247,13 +284,18 @@ def download_youtube_playlist(url: str) -> int:
     return result
 
 
-def download_youtube_audio(urls: list[str]) -> int:
+def download_youtube_audio(
+    urls: list[str], audio_format: AudioFormat = AudioFormat.ORIGINAL,
+    embed_thumbnail: bool = False,
+) -> int:
     print("Mode: YouTube audio")
     print("Extractor: yt-dlp")
     print("Download engine: aria2c where supported")
-    print("Output: original best available audio")
+    print("Output: " + ("original best available audio" if audio_format == AudioFormat.ORIGINAL
+                         else audio_format.value.upper()))
 
-    command = build_youtube_audio_command(len(urls))
+    command = build_youtube_audio_command(len(urls), audio_format=audio_format,
+                                          embed_thumbnail=embed_thumbnail)
 
     command.extend(urls)
 
@@ -294,7 +336,8 @@ def download_youtube(urls: list[str]) -> int:
         result = download_youtube_video(urls, max_height=selected_height)
 
     elif mode == "audio":
-        result = download_youtube_audio(urls)
+        audio_format, embed_thumbnail = choose_youtube_audio_options()
+        result = download_youtube_audio(urls, audio_format, embed_thumbnail)
 
     else:
         result = download_youtube_audio_wav(urls)
