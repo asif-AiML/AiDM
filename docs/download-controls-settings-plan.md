@@ -830,23 +830,148 @@ Full download completion is not required solely for validating this setting.
 
 ---
 
-### 6.4 Retry count
+### 6.4 Retry attempts — LOCKED DESIGN
 
-Relevant aria2c option:
+Primary aria2c option:
 
 ```text
 --max-tries
 ```
 
-Friendly setting:
+Friendly control:
 
 ```text
 Retry attempts
 ```
 
-This is primarily a reliability control.
+aria2c is the primary target for this setting because it performs most current AiDM transfers.
 
-Higher values can help unstable connections but can also make a permanently broken download take longer to fail.
+For browser-assisted HLS/DASH, AiDM applies the equivalent general retry setting to yt-dlp.
+
+#### Locked choices
+
+The first version should expose:
+
+```text
+Auto — Recommended
+3 — Quick failure
+5 — Balanced
+10 — Persistent
+```
+
+#### Auto — Recommended
+
+`Auto` preserves the normal retry behavior of whichever engine is actually transferring the data.
+
+Conceptually:
+
+```text
+aria2c-backed downloads
+→ keep aria2c's normal retry behavior
+
+browser-assisted HLS/DASH via yt-dlp
+→ keep yt-dlp's normal retry behavior
+```
+
+This avoids silently changing established retry behavior for users who never modify the setting.
+
+#### 3 — Quick failure
+
+Use fewer retries.
+
+Useful when the user prefers a broken download to fail sooner rather than waiting through many repeated attempts.
+
+#### 5 — Balanced
+
+A moderate retry policy.
+
+Useful for ordinary unstable connections without making failures excessively slow to surface.
+
+#### 10 — Persistent
+
+A more patient retry policy.
+
+Useful when:
+
+- the connection is weak;
+- the server is temporarily unreliable;
+- occasional failures are expected.
+
+A permanently broken download may take longer to give up.
+
+#### Engine mapping
+
+When the user selects an explicit numeric value:
+
+```text
+aria2c
+→ --max-tries=N
+
+yt-dlp native HLS/DASH
+→ --retries N
+```
+
+The GUI exposes one AiDM concept while the backend applies the corresponding flag to the actual transfer engine.
+
+#### Applicability
+
+```text
+Direct single                         yes, via aria2c
+Direct bulk sequential                yes, via aria2c
+Direct bulk parallel                  yes, via aria2c
+Normal YouTube transfer via aria2c    yes, via aria2c
+Other aria2c-backed media             yes
+
+Browser-assisted HLS/DASH             yes, via yt-dlp --retries
+```
+
+#### Important distinction
+
+This setting controls **general download/connection retry attempts**.
+
+It is separate from:
+
+```text
+Stream fragment retries
+→ yt-dlp --fragment-retries
+```
+
+HLS/DASH fragment retry behavior is a separate control because retrying one failed media fragment is different from retrying the broader download/request stage.
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Retry attempts
+
+Controls how many times AiDM retries after a temporary download
+or connection failure. More retries can help unstable networks,
+but a permanently broken download will take longer to give up.
+
+Auto — Recommended keeps the normal retry behavior of the active
+download engine. 3 gives up sooner, 5 is balanced, and 10 is
+more persistent.
+
+For most downloads this controls aria2c. For browser-assisted
+HLS/DASH streams, AiDM applies the equivalent retry setting to
+yt-dlp.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+No long failure simulation is required.
+
+Implementation-phase checks only need to verify that:
+
+- Auto leaves explicit retry flags unset;
+- numeric choices map to the correct engine flag;
+- aria2c receives `--max-tries=N`;
+- browser-assisted HLS/DASH receives yt-dlp `--retries N`.
+
+A deliberately flaky network test is optional rather than required for first implementation.
 
 ---
 
@@ -1015,21 +1140,31 @@ Full stream completion is not required solely for validating this setting.
 
 ### 7.2 General retry count
 
-Relevant yt-dlp option:
+yt-dlp native uses:
 
 ```text
 --retries
 ```
 
-Friendly setting:
+The user does **not** receive a separate yt-dlp general-retry control.
+
+The single locked AiDM control is defined in:
 
 ```text
-Retry attempts
+6.4 Retry attempts — LOCKED DESIGN
 ```
 
-AiDM may expose a single high-level retry setting and translate it to the appropriate engine option where practical.
+AiDM applies that setting according to the actual transfer engine:
 
-The exact mapping needs to be designed carefully because yt-dlp and aria2c have different retry semantics.
+```text
+aria2c-backed transfer
+→ --max-tries
+
+yt-dlp-native browser-assisted HLS/DASH
+→ --retries
+```
+
+This remains separate from yt-dlp `--fragment-retries`, which is handled by the dedicated Stream fragment retries control.
 
 ---
 
