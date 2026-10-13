@@ -13,7 +13,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import youtube
-from download_job import DownloadJob, YouTubeMode, VideoQuality
+from download_job import AudioFormat, DownloadJob, YouTubeMode, VideoQuality
 from inspection import InputKind
 from progress_event import ProgressEvent
 from status_event import StatusEvent, StatusKind
@@ -146,13 +146,16 @@ class YouTubeExecutionTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def start_youtube(self, mode=YouTubeMode.VIDEO, quality=1080):
+    def start_youtube(self, mode=YouTubeMode.VIDEO, quality=1080, *, audio_format=None, embed=False):
         self.window.input_field.clear()
         self.inspect(InputKind.YOUTUBE_SINGLE)
         self.window.inspection_result = replace(self.window.inspection_result, title="Actual YouTube Title")
         self.window.on_download_intent()
         with patch("gui_quality.QualityProcess.start"):
-            self.window.mode_buttons[mode].click()
+            self.window.mode_buttons[YouTubeMode.VIDEO if mode == YouTubeMode.VIDEO else YouTubeMode.AUDIO].click()
+            if mode != YouTubeMode.VIDEO:
+                self.window.audio_buttons[audio_format or (AudioFormat.WAV if mode == YouTubeMode.WAV else AudioFormat.ORIGINAL)].click()
+                self.window.thumbnail_choice.setChecked(embed)
         if mode == YouTubeMode.VIDEO:
             self.window.finish_quality(self.window._quality_generation, [quality] if type(quality) is int else [])
             if type(quality) is int:
@@ -226,6 +229,32 @@ class YouTubeExecutionTests(unittest.TestCase):
         self.assertEqual(self.window.current_state, GuiState.COMPLETE)
         self.assertEqual(self.window.media_title.text(), job.title)
         self.assertTrue(self.window.retry_button.isHidden())
+
+    def test_audio_formats_artwork_warning_and_retry_snapshot(self):
+        for audio_format in AudioFormat:
+            worker = self.start_youtube(YouTubeMode.AUDIO, audio_format=audio_format,
+                                        embed=audio_format != AudioFormat.WAV)
+            snapshot = worker.job
+            self.assertEqual(snapshot.audio_format, audio_format)
+            self.assertEqual(snapshot.embed_thumbnail, audio_format != AudioFormat.WAV)
+            worker.process.begin()
+            worker.process.stdout = b'AIDM_POSTPROCESS:{"status":"started","postprocessor":"AiDMThumbnail"}\n'
+            worker.process.readyReadStandardOutput.emit()
+            self.assertIn('Embedding thumbnail', self.window.active_status.text())
+            self.assertTrue(self.window.progress.isHidden())
+            self.window.abort_button.click()
+            self.assertEqual(self.window.current_state, GuiState.ABORTED)
+            self.window.retry_button.click()
+            current = self.window._download_process
+            self.assertIs(current.job, snapshot)
+            self.assertEqual(current.build_command(), worker.build_command())
+            current.process.begin()
+            current.process.stdout = b'AIDM_ARTWORK_WARNING:skipped\n'
+            current.process.readyReadStandardOutput.emit()
+            current.process.finish()
+            self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+            self.assertFalse(self.window.workflow_warning.isHidden())
+            self.assertIn('artwork', self.window.workflow_warning.text())
 
     def test_start_failure_and_nonzero_exit_retain_title_and_retry(self):
         for start_failure in (False, True):

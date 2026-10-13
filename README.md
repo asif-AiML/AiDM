@@ -367,7 +367,9 @@ Supported areas include:
 - playlists;
 - video mode;
 - original best-quality audio;
+- FLAC and high-quality MP3 audio conversion;
 - WAV audio conversion;
+- optional embedded audio cover artwork for compatible containers;
 - playlist quality discovery/selection.
 
 Example:
@@ -377,6 +379,17 @@ python aidm.py 'https://www.youtube.com/watch?v=...'
 ```
 
 AiDM then presents the applicable YouTube mode menu.
+
+Single videos and URL-list batches offer **Video** or **Audio**. Audio then offers
+**Original Best**, **FLAC**, **MP3**, or **WAV**, with artwork off by default.
+The GUI waits for explicit media and audio-format choices; only Video starts
+quality discovery. Playlists remain video-only.
+
+Original Best preserves the selected source container, including WebM; unsupported
+artwork is skipped with a warning, without converting the audio. WAV artwork is
+disabled. FLAC/WAV conversion does not restore quality lost in YouTube's source.
+See [audio implementation and manual tests](docs/youtube-audio-thumbnails.md)
+for compatibility, failure handling, and Linux Mint checks.
 
 ### Multiple YouTube videos
 

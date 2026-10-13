@@ -14,7 +14,7 @@ except ImportError:
     raise unittest.SkipTest("Destination GUI checks require PySide6")
 
 from aidm_gui import AiDMWindow, GuiState, existing_destination, initial_destination
-from download_job import BulkMode, YouTubeMode
+from download_job import AudioFormat, BulkMode, YouTubeMode
 from inspection import InputKind, InspectionResult, MetadataStatus
 from stream_parser import StreamInput
 
@@ -158,9 +158,11 @@ class DestinationTests(unittest.TestCase):
             window = self.window()
             self.inspect(window, InputKind.YOUTUBE_SINGLE)
             window.download_button.click()
-            window.mode_buttons[mode].click()
+            window.mode_buttons[YouTubeMode.AUDIO].click()
+            window.audio_buttons[AudioFormat.WAV if mode == YouTubeMode.WAV else AudioFormat.ORIGINAL].click()
             self.browse(window, self.custom)
-            self.assertEqual(window.download_job.mode, mode)
+            self.assertEqual(window.download_job.mode, YouTubeMode.AUDIO)
+            self.assertEqual(window.download_job.audio_format, AudioFormat.WAV if mode == YouTubeMode.WAV else AudioFormat.ORIGINAL)
             self.assertEqual(window.download_job.destination, str(self.custom))
             self.assertEqual(window.build_job_for_testing(mode=mode).destination, str(self.custom))
         for bulk_mode in BulkMode:
@@ -182,7 +184,8 @@ class DestinationTests(unittest.TestCase):
         window = self.window()
         self.inspect(window, InputKind.YOUTUBE_SINGLE)
         window.download_button.click()
-        window.mode_buttons[YouTubeMode.WAV].click()
+        window.mode_buttons[YouTubeMode.AUDIO].click()
+        window.audio_buttons[AudioFormat.WAV].click()
         self.browse(window, self.custom)
         window.input_field.setText("--title 'unfinished")
         self.assertFalse(window._configuration_started)

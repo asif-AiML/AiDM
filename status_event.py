@@ -12,6 +12,7 @@ class StatusKind(Enum):
     DOWNLOADING_SUBTITLE = "downloading_subtitle"
     MERGING = "merging"
     CONVERTING_AUDIO = "converting_audio"
+    EMBEDDING_THUMBNAIL = "embedding_thumbnail"
     REMUXING = "remuxing"
     FINALIZING = "finalizing"
     COMPLETE = "complete"

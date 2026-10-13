@@ -11,8 +11,26 @@ from inspection import InputKind, InspectionResult
 
 class YouTubeMode(Enum):
     VIDEO = "video"
+    AUDIO = "audio"
+    # Retain existing programmatic callers; new frontends use AUDIO + AudioFormat.
     ORIGINAL_AUDIO = "original_audio"
     WAV = "wav"
+
+
+class AudioFormat(Enum):
+    ORIGINAL = "original"
+    FLAC = "flac"
+    MP3 = "mp3"
+    WAV = "wav"
+
+
+def validate_audio_options(audio_format, embed_thumbnail):
+    if not isinstance(audio_format, AudioFormat):
+        raise ValueError("Audio requires an explicit AudioFormat")
+    if type(embed_thumbnail) is not bool:
+        raise ValueError("embed_thumbnail must be a boolean")
+    if audio_format == AudioFormat.WAV and embed_thumbnail:
+        raise ValueError("WAV does not support compatible thumbnail embedding")
 
 
 class BulkMode(Enum):
@@ -40,6 +58,8 @@ class DownloadJob:
     route_kind: InputKind | None = None
     # Known size of a collection URL; URL-list bulk already has len(urls).
     item_count: int | None = None
+    audio_format: AudioFormat | None = None
+    embed_thumbnail: bool = False
 
     def __post_init__(self) -> None:
         # Filesystem availability belongs to the frontend/execution boundary.
@@ -92,6 +112,16 @@ class DownloadJob:
                 raise ValueError("YouTube single/bulk requires an explicit YouTubeMode")
         elif self.mode is not None:
             raise ValueError("mode is only valid for YouTube single/bulk")
+        legacy_format = {YouTubeMode.ORIGINAL_AUDIO: AudioFormat.ORIGINAL,
+                         YouTubeMode.WAV: AudioFormat.WAV}.get(self.mode)
+        if legacy_format is not None:
+            if self.audio_format not in (None, legacy_format):
+                raise ValueError("Audio format conflicts with legacy YouTube mode")
+            object.__setattr__(self, "audio_format", legacy_format)
+        if self.mode in {YouTubeMode.AUDIO, YouTubeMode.ORIGINAL_AUDIO, YouTubeMode.WAV}:
+            validate_audio_options(self.audio_format, self.embed_thumbnail)
+        elif self.audio_format is not None or self.embed_thumbnail is not False:
+            raise ValueError("Audio configuration requires YouTube single/bulk audio mode")
         needs_video_quality = route == InputKind.YOUTUBE_PLAYLIST or (
             route in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK}
             and self.mode == YouTubeMode.VIDEO
@@ -118,6 +148,8 @@ def build_download_job(
     mode: YouTubeMode | None = None,
     video_quality: int | VideoQuality | None = None,
     bulk_mode: BulkMode | None = None,
+    audio_format: AudioFormat | None = None,
+    embed_thumbnail: bool = False,
 ) -> DownloadJob:
     """Snapshot classification and explicit choices; never inspect or execute."""
     if result.error is not None:
@@ -141,4 +173,5 @@ def build_download_job(
         bulk_mode=bulk_mode, title=title, headers=headers, subtitles=subtitles,
         route_kind=result.route_kind,
         item_count=result.item_count if result.route == InputKind.YOUTUBE_PLAYLIST else None,
+        audio_format=audio_format, embed_thumbnail=embed_thumbnail,
     )

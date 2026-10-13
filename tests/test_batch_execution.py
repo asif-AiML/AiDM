@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from batch_event import BatchEvent, ItemStarted, SequentialBatchProgress
-from download_job import DownloadJob, YouTubeMode, VideoQuality, BulkMode
+from download_job import AudioFormat, DownloadJob, YouTubeMode, VideoQuality, BulkMode
 from inspection import InputKind
 from progress_event import ProgressEvent
 from status_event import StatusEvent, StatusKind
@@ -145,7 +145,7 @@ class BatchGuiTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def start_bulk(self, mode=YouTubeMode.VIDEO, quality=720, count=2):
+    def start_bulk(self, mode=YouTubeMode.VIDEO, quality=720, count=2, *, audio_format=None, embed=False):
         self.window.input_field.clear()
         self.inspect(InputKind.YOUTUBE_BULK)
         if count != 2:
@@ -155,7 +155,10 @@ class BatchGuiTests(unittest.TestCase):
             )
         self.window.on_download_intent()
         with patch('gui_quality.QualityProcess.start'):
-            self.window.mode_buttons[mode].click()
+            self.window.mode_buttons[YouTubeMode.VIDEO if mode == YouTubeMode.VIDEO else YouTubeMode.AUDIO].click()
+            if mode != YouTubeMode.VIDEO:
+                self.window.audio_buttons[audio_format or (AudioFormat.WAV if mode == YouTubeMode.WAV else AudioFormat.ORIGINAL)].click()
+                self.window.thumbnail_choice.setChecked(embed)
         if mode == YouTubeMode.VIDEO:
             self.window.finish_quality(self.window._quality_generation, [quality] if type(quality) is int else [])
             if type(quality) is int:
@@ -187,6 +190,29 @@ class BatchGuiTests(unittest.TestCase):
                     self.assertEqual(args[args.index('-f')+1], 'bestaudio/best')
                     self.assertEqual('--extract-audio' in args, mode == YouTubeMode.WAV)
                 worker.process.finish()
+
+    def test_audio_batch_warning_survives_next_item_and_retry_keeps_configuration(self):
+        for audio_format in (AudioFormat.FLAC, AudioFormat.MP3):
+            worker = self.start_bulk(YouTubeMode.AUDIO, audio_format=audio_format, embed=True)
+            snapshot = worker.job
+            worker.process.begin()
+            self.feed(worker, item(1, 'First'))
+            self.feed(worker, b'AIDM_ARTWORK_WARNING:skipped\n')
+            self.feed(worker, item(2, 'Second'))
+            worker.process.finish(1)
+            self.assertEqual(self.window.current_state, GuiState.FAILED)
+            self.window.retry_button.click()
+            current = self.window._download_process
+            self.assertIs(current.job, snapshot)
+            self.assertEqual(current.build_command(), worker.build_command())
+            current.process.begin()
+            self.feed(current, item(1, 'First'))
+            self.feed(current, b'AIDM_ARTWORK_WARNING:skipped\n')
+            self.feed(current, item(2, 'Second'))
+            current.process.finish()
+            self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+            self.assertIn('artwork', self.window.workflow_warning.text())
+            self.assertFalse(self.window.workflow_warning.isHidden())
 
     def test_queue_title_aggregate_and_current_item_stats(self):
         worker = self.start_bulk()
