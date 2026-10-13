@@ -658,36 +658,175 @@ The purpose is to validate queue behavior and command wiring, not to benchmark t
 
 ---
 
-### 6.3 Global bandwidth limit
+### 6.3 Download speed limit — LOCKED DESIGN
 
-Relevant aria2c option:
+Primary aria2c option:
 
 ```text
 --max-overall-download-limit
 ```
 
-Friendly setting:
+Friendly control:
 
 ```text
 Download speed limit
 ```
 
-Possible choices:
+aria2c is the primary target for this setting because it performs the actual transfer for most current AiDM download paths, including direct downloads and normal YouTube transfers delegated by yt-dlp.
+
+#### Locked choices
+
+The first version should expose:
 
 ```text
-Unlimited
+Unlimited — Recommended
 1 MB/s
 2 MB/s
 5 MB/s
 10 MB/s
-Custom...
 ```
 
-This is user control rather than a speed enhancement.
+There is intentionally **no Custom option**.
 
-It is useful when the user wants to leave bandwidth available for browsing, calls, gaming, or other devices.
+The user does not need arbitrary bandwidth values, and removing Custom avoids confusing or unrealistic entries such as extremely high manual limits.
 
-For parallel jobs, an overall limit is easier to understand than a separate limit per file.
+#### Unlimited — Recommended
+
+Meaning:
+
+```text
+no artificial AiDM bandwidth cap
+```
+
+AiDM allows the active transfer engine to use as much bandwidth as the server, network and connection conditions permit.
+
+This is the recommended/default choice.
+
+#### Limited values
+
+```text
+1 MB/s
+2 MB/s
+5 MB/s
+10 MB/s
+```
+
+These values intentionally trade maximum download speed for available bandwidth.
+
+They are useful when the user wants to leave bandwidth available for:
+
+- browsing;
+- calls;
+- gaming;
+- other devices;
+- other network activity.
+
+#### aria2c mapping
+
+For aria2c-backed downloads:
+
+```text
+Unlimited
+→ do not apply an artificial overall speed limit
+
+1 MB/s
+→ --max-overall-download-limit=1M
+
+2 MB/s
+→ --max-overall-download-limit=2M
+
+5 MB/s
+→ --max-overall-download-limit=5M
+
+10 MB/s
+→ --max-overall-download-limit=10M
+```
+
+This is especially useful for Direct Bulk → Parallel because the limit applies to the aria2c process as a whole rather than separately multiplying a per-file cap across every active item.
+
+#### yt-dlp native mapping
+
+For browser-assisted HLS/DASH where yt-dlp's native downloader actually transfers the media:
+
+```text
+Unlimited
+→ no artificial yt-dlp rate limit
+
+1 MB/s
+→ --limit-rate 1M
+
+2 MB/s
+→ --limit-rate 2M
+
+5 MB/s
+→ --limit-rate 5M
+
+10 MB/s
+→ --limit-rate 10M
+```
+
+This keeps one user-facing AiDM control while applying the correct engine-specific flag.
+
+#### Applicability
+
+Primary current applicability:
+
+```text
+Direct single                         yes, via aria2c
+Direct bulk sequential                yes, via aria2c
+Direct bulk parallel                  yes, via aria2c
+Normal YouTube transfer via aria2c    yes, via aria2c
+Other aria2c-backed media transfers   yes
+Browser-assisted HLS/DASH             yes, via yt-dlp native
+```
+
+The practical emphasis remains aria2c because it handles the large majority of actual transfer work in current AiDM routes.
+
+yt-dlp-native rate limiting mainly matters for browser-assisted HLS/DASH streams.
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Download speed limit
+
+Limits how much download bandwidth AiDM may use. Lower values
+leave more bandwidth available for browsing, calls, gaming or
+other devices.
+
+Unlimited — Recommended removes the artificial cap and lets
+AiDM use as much speed as the server and network allow.
+
+This setting mainly affects downloads handled by aria2c,
+including direct files and normal YouTube transfers. For
+browser-assisted HLS/DASH streams, AiDM applies the equivalent
+limit to yt-dlp's native downloader.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+No long performance benchmark is required.
+
+A short wiring test is sufficient.
+
+Suggested implementation-phase checks:
+
+```text
+2 MB/s
+→ verify transfer speed is constrained around the configured cap
+
+Unlimited
+→ verify the artificial cap is removed
+```
+
+Test at least one aria2c-backed transfer.
+
+A short browser-assisted HLS/DASH check should also verify that the equivalent yt-dlp rate limit is passed correctly.
+
+Full download completion is not required solely for validating this setting.
 
 ---
 
@@ -916,29 +1055,33 @@ It controls how persistent yt-dlp should be when individual fragments temporaril
 
 ### 7.4 Bandwidth limit
 
-Relevant yt-dlp option:
+yt-dlp native uses:
 
 ```text
 --limit-rate
 ```
 
-The user should ideally see one AiDM-level concept:
+The user does **not** receive a separate yt-dlp speed-limit control.
+
+The single locked AiDM control is defined in:
 
 ```text
-Download speed limit
+6.3 Download speed limit — LOCKED DESIGN
 ```
 
-AiDM then applies the appropriate engine-specific option depending on which engine actually performs the transfer.
-
-Conceptually:
+AiDM applies that setting to the actual transfer engine:
 
 ```text
-AiDM speed limit
-├─ aria2c → --max-overall-download-limit
-└─ yt-dlp native → --limit-rate
+aria2c-backed transfer
+→ --max-overall-download-limit
+
+yt-dlp-native HLS/DASH transfer
+→ --limit-rate
 ```
 
-This abstraction is preferred over making users configure separate engine-specific speed limits.
+aria2c remains the primary practical target because it performs most current AiDM transfers.
+
+yt-dlp-native rate limiting is mainly relevant to browser-assisted HLS/DASH.
 
 ---
 
