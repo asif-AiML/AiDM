@@ -713,7 +713,7 @@ Higher values can help unstable connections but can also make a permanently brok
 
 ## 7. Important yt-dlp controls
 
-### 7.1 HLS/DASH fragment concurrency
+### 7.1 Concurrent stream fragments — LOCKED DESIGN
 
 Relevant yt-dlp option:
 
@@ -722,43 +722,155 @@ Relevant yt-dlp option:
 --concurrent-fragments
 ```
 
-This controls how many HLS/DASH fragments yt-dlp's native downloader fetches simultaneously.
-
-Friendly setting:
-
-```text
-Stream fragments
-```
-
-or:
+Friendly control:
 
 ```text
 Concurrent stream fragments
 ```
 
-Typical conceptual values:
+This control applies when yt-dlp's **native HLS/DASH fragment downloader** is actually transferring the media.
+
+For the current GUI architecture, the main use case is:
 
 ```text
-1 — Conservative
+Browser-assisted HLS/DASH
+→ yt-dlp native downloader
+```
+
+#### Locked choices
+
+The first version should expose:
+
+```text
+1 — Maximum compatibility
 4 — Recommended
 8 — Best performance
 ```
 
-These values are examples only and must be validated.
+The default/recommended value is:
 
-Expected effect:
+```text
+4
+```
 
-- `1`: safest / least aggressive;
-- higher values: more fragments downloaded concurrently;
-- may significantly improve throughput on fragmented media;
-- may increase server pressure;
-- may not improve speed on restrictive servers.
+No Auto option is needed for this control.
 
-This is especially relevant to:
+Unlike aria2-backed routes, there is no need to preserve different route-specific connection defaults here. The setting exists specifically to control yt-dlp native fragment concurrency.
 
-- HLS;
-- DASH;
-- Stream Inspector workflows using yt-dlp native fragment downloading.
+#### 1 — Maximum compatibility
+
+Meaning:
+
+```text
+one HLS/DASH fragment downloaded at a time
+```
+
+Expected behavior:
+
+- least aggressive;
+- safest with restrictive servers;
+- useful if higher concurrency causes errors;
+- may be slower on servers that support parallel fragment fetching.
+
+#### 4 — Recommended
+
+Meaning:
+
+```text
+up to four HLS/DASH fragments downloaded concurrently
+```
+
+Expected behavior:
+
+- balanced concurrency;
+- recommended general-purpose choice;
+- can improve stream download throughput without using the strongest exposed setting.
+
+#### 8 — Best performance
+
+Meaning:
+
+```text
+up to eight HLS/DASH fragments downloaded concurrently
+```
+
+Expected behavior:
+
+- strongest performance-oriented value exposed in the first version;
+- may provide higher throughput on servers that benefit from fragment concurrency;
+- is not guaranteed to be faster on every server;
+- some servers may restrict or throttle higher concurrency.
+
+The label `Best performance` means the strongest performance-oriented choice intentionally exposed by AiDM, not a universal speed guarantee.
+
+#### Applicability
+
+Applies to:
+
+```text
+Browser-assisted HLS/DASH using yt-dlp native fragments    yes
+Future naked HLS/DASH GUI path using yt-dlp native         yes
+```
+
+Does not apply to:
+
+```text
+Direct single                                               no
+Direct bulk sequential                                      no
+Direct bulk parallel                                        no
+Normal YouTube transfer delegated to aria2c                 no
+Other aria2c-backed media transfers                         no
+```
+
+The fact that yt-dlp participates in a route does not make this setting relevant unless yt-dlp's native fragment downloader is the component transferring the media.
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Concurrent stream fragments
+
+Controls how many pieces of an HLS/DASH stream yt-dlp
+downloads at the same time. Higher values can improve stream
+download speed, but some servers may not benefit from extra
+concurrency.
+
+1 offers maximum compatibility, 4 is recommended, and 8 is
+the performance-oriented choice.
+
+This setting affects browser-assisted HLS/DASH downloads
+handled by yt-dlp's native fragment downloader. It does not
+affect direct downloads or normal YouTube transfers handled
+by aria2c.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+No long download session is required.
+
+A short browser-assisted HLS/DASH test is enough.
+
+Suggested implementation-phase checks:
+
+```text
+-N 1 → run briefly
+-N 4 → run briefly
+-N 8 → run briefly
+```
+
+About 20–30 seconds per run is sufficient.
+
+The purpose is to verify:
+
+- the selected value is correctly passed to yt-dlp;
+- fragment concurrency remains operational;
+- no obvious failure appears;
+- 4 and 8 remain sane choices.
+
+Full stream completion is not required solely for validating this setting.
 
 ---
 
