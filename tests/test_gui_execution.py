@@ -17,7 +17,7 @@ except ImportError:
     raise unittest.SkipTest("GUI execution checks require PySide6")
 
 from aidm_gui import AiDMWindow, GuiState, render_status
-from download_job import BulkMode, DownloadJob, YouTubeMode
+from download_job import AudioFormat, BulkMode, DownloadJob, YouTubeMode
 from downloader import build_direct_command
 from gui_execution import DirectDownloadProcess, DownloadProcess, ExecutionOutcome
 from inspection import InputKind, InspectionResult
@@ -806,7 +806,8 @@ class GuiExecutionTests(unittest.TestCase):
             self.inspect(kind, InputKind.DIRECT_SINGLE if kind == InputKind.STREAM_INSPECTOR else None)
             if kind in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK}:
                 self.window.on_download_intent()
-                self.window.mode_buttons[YouTubeMode.WAV].click()
+                self.window.mode_buttons[YouTubeMode.AUDIO].click()
+                self.window.audio_buttons[AudioFormat.WAV].click()
             elif kind == InputKind.DIRECT_BULK:
                 self.window.on_download_intent()
                 self.window.bulk_buttons[BulkMode.SEQUENTIAL].click()

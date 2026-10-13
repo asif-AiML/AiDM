@@ -2,30 +2,14 @@ __pycache__/
 *.py[cod]
 .vscode
 
-# Local regression checks (kept out of Git by project preference)
-/tests/*
-# Persistent backend quality regressions (Milestone 7.2)
-!/tests/test_youtube_quality.py
-# Persistent shared model/API regressions (Milestone 7.3)
-!/tests/test_download_job.py
-!/tests/test_gui_download_job.py
-!/tests/test_gui_options.py
-!/tests/test_gui_destination.py
-# Persistent direct execution regressions (Milestone 10)
-!/tests/test_direct_execution.py
-!/tests/test_gui_execution.py
-# Persistent status-event contract regressions (Milestone 11)
-!/tests/test_status_event.py
-# Persistent telemetry regressions and captured console fixtures (Milestone 12)
-!/tests/test_progress.py
-!/tests/fixtures/
-# Persistent single-YouTube execution and telemetry regressions (Milestone 15)
-!/tests/test_youtube_execution.py
-# Persistent shared batch and YouTube bulk execution checks (Milestone 16)
-!/tests/test_batch_execution.py
-!/tests/test_playlist_execution.py
-!/tests/test_gui_metadata.py
-# Persistent direct bulk execution and parallel telemetry checks (Milestone 18)
-!/tests/test_direct_bulk_execution.py
-# Persistent Inspector workflow regressions (Milestone 20)
-!/tests/test_inspector_execution.py
+# Local tests, fixtures, and supporting documentation
+/tests/
+
+# Test/tool caches and generated coverage reports
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

@@ -19,7 +19,7 @@ except ImportError:
     raise unittest.SkipTest("GUI options require PySide6")
 
 from aidm_gui import AiDMWindow, GuiState
-from download_job import BulkMode, VideoQuality, YouTubeMode
+from download_job import AudioFormat, BulkMode, VideoQuality, YouTubeMode
 from gui_quality import QualityProcess, quality_command
 from inspection import InputKind, InspectionResult, MetadataStatus, classify_input
 from stream_parser import StreamInput
@@ -112,9 +112,10 @@ class GuiOptionsTests(unittest.TestCase):
                                window.browse_button, window.download_button])
         window.mode_buttons[YouTubeMode.VIDEO].setFocus()
         QTest.keyClick(window.focusWidget(), Qt.Key.Key_Right)
-        self.assertTrue(window.mode_buttons[YouTubeMode.ORIGINAL_AUDIO].isChecked())
-        self.assert_tab_cycle([window.input_field, window.mode_buttons[YouTubeMode.ORIGINAL_AUDIO],
-                               window.destination_field, window.browse_button, window.download_button])
+        self.assertTrue(window.mode_buttons[YouTubeMode.AUDIO].isChecked())
+        self.assert_tab_cycle([window.input_field, window.mode_buttons[YouTubeMode.AUDIO],
+                               window.audio_buttons[AudioFormat.ORIGINAL],
+                               window.destination_field, window.browse_button])
         window.input_field.clear()
         QTest.keyClick(window.focusWidget() or window, Qt.Key.Key_Tab)
         self.assertIs(window.focusWidget(), window.input_field)
@@ -159,13 +160,85 @@ class GuiOptionsTests(unittest.TestCase):
     def test_audio_and_wav_never_discover(self):
         self.paste()
         self.window.download_button.click()
-        for mode in (YouTubeMode.ORIGINAL_AUDIO, YouTubeMode.WAV):
-            self.window.mode_buttons[mode].click()
-            self.assertEqual(self.window.download_job.mode, mode)
+        self.window.mode_buttons[YouTubeMode.AUDIO].click()
+        for mode in AudioFormat:
+            self.window.audio_buttons[mode].click()
+            self.assertEqual(self.window.download_job.mode, YouTubeMode.AUDIO)
+            self.assertEqual(self.window.download_job.audio_format, mode)
             self.assertIsNone(self.window.download_job.video_quality)
             self.assertEqual(self.window.current_state, GuiState.READY)
             self.assertTrue(self.window.quality_options.isHidden())
         self.assertEqual(self.workers, [])
+
+    def test_audio_requires_explicit_choices_and_thumbnail_availability(self):
+        self.paste()
+        window = self.window
+        self.assertIsNone(window.mode_group.checkedButton())
+        self.assertEqual(self.workers, [])
+        window.download_button.click()
+        window.mode_buttons[YouTubeMode.AUDIO].click()
+        self.assertEqual(window.current_state, GuiState.NEEDS_OPTIONS)
+        self.assertIsNone(window.audio_group.checkedButton())
+        self.assertIsNone(window.download_job)
+        self.assertFalse(window.audio_options.isHidden())
+        self.assertTrue(window.thumbnail_options.isHidden())
+        self.assertFalse(window.thumbnail_choice.isChecked())
+        for audio_format in (AudioFormat.ORIGINAL, AudioFormat.FLAC, AudioFormat.MP3, AudioFormat.WAV):
+            window.audio_buttons[audio_format].click()
+            self.assertFalse(window.thumbnail_options.isHidden())
+            self.assertEqual(window.thumbnail_choice.isEnabled(), audio_format != AudioFormat.WAV)
+            if audio_format == AudioFormat.WAV:
+                self.assertFalse(window.thumbnail_choice.isChecked())
+                self.assertFalse(window.download_job.embed_thumbnail)
+                self.assertIn('WAV', window.thumbnail_help.text())
+            else:
+                window.thumbnail_choice.setChecked(True)
+                self.assertTrue(window.download_job.embed_thumbnail)
+        window.audio_buttons[AudioFormat.MP3].click()
+        self.assertFalse(window.download_job.embed_thumbnail)
+        self.assertEqual(self.workers, [])
+
+    def test_audio_to_video_clears_configuration_and_resizes(self):
+        self.paste()
+        window = self.window
+        window.download_button.click()
+        window.mode_buttons[YouTubeMode.AUDIO].click()
+        window.audio_buttons[AudioFormat.ORIGINAL].click()
+        window.thumbnail_choice.setChecked(True)
+        snapshot = window.download_job
+        self.app.processEvents()
+        audio_height = window.height()
+        window.mode_buttons[YouTubeMode.VIDEO].click()
+        self.app.processEvents()
+        self.assertTrue(window.audio_options.isHidden())
+        self.assertTrue(window.thumbnail_options.isHidden())
+        self.assertIsNone(window.audio_group.checkedButton())
+        self.assertFalse(window.thumbnail_choice.isChecked())
+        self.assertIsNone(window.download_job)
+        self.assertLess(window.height(), audio_height)
+        self.assertEqual(snapshot.audio_format, AudioFormat.ORIGINAL)
+        self.assertTrue(snapshot.embed_thumbnail)
+        worker = self.workers[-1]
+        window.mode_buttons[YouTubeMode.AUDIO].click()
+        worker.finished.emit(worker.revision, [2160])
+        self.assertIsNone(window.download_job)
+        self.assertEqual(window.quality_choice.count(), 0)
+        self.assertIsNone(window.audio_group.checkedButton())
+
+    def test_bulk_audio_snapshot_and_playlist_hides_audio(self):
+        self.paste(InputKind.YOUTUBE_BULK, 'https://youtu.be/abcdefghijk https://youtu.be/lmnopqrstuv')
+        window = self.window
+        window.download_button.click()
+        window.mode_buttons[YouTubeMode.AUDIO].click()
+        window.audio_buttons[AudioFormat.FLAC].click()
+        window.thumbnail_choice.setChecked(True)
+        self.assertEqual(len(window.download_job.urls), 2)
+        self.assertEqual(window.download_job.audio_format, AudioFormat.FLAC)
+        self.assertTrue(window.download_job.embed_thumbnail)
+        self.paste(InputKind.YOUTUBE_PLAYLIST, 'https://youtube.com/playlist?list=PLtest')
+        window.download_button.click()
+        self.assertTrue(window.audio_options.isHidden())
+        self.assertTrue(window.thumbnail_options.isHidden())
 
     def test_bulk_uses_only_first_normalized_url(self):
         self.paste(InputKind.YOUTUBE_BULK, "https://youtube.com/watch?v=abcdefghijk&list=unused https://youtu.be/lmnopqrstuv")
@@ -222,7 +295,8 @@ class GuiOptionsTests(unittest.TestCase):
         self.assertEqual(self.window.current_state, GuiState.NEEDS_OPTIONS)
         QTest.keyClick(self.window.input_field, Qt.Key.Key_Return)
         self.assertIsNone(self.window.download_job)
-        self.window.mode_buttons[YouTubeMode.WAV].click()
+        self.window.mode_buttons[YouTubeMode.AUDIO].click()
+        self.window.audio_buttons[AudioFormat.WAV].click()
         with patch.object(self.window, "start_download") as start:
             QTest.keyClick(self.window.input_field, Qt.Key.Key_Return)
             start.assert_called_once_with(self.window.download_job)
@@ -230,11 +304,13 @@ class GuiOptionsTests(unittest.TestCase):
     def test_video_to_audio_invalidates_late_result(self):
         self.paste()
         worker = self.video()
-        for mode in (YouTubeMode.ORIGINAL_AUDIO, YouTubeMode.WAV):
-            self.window.mode_buttons[mode].click()
+        self.window.mode_buttons[YouTubeMode.AUDIO].click()
+        for mode in AudioFormat:
+            self.window.audio_buttons[mode].click()
             self.assertTrue(worker.cancelled)
             worker.finished.emit(worker.revision, [2160])
-            self.assertEqual(self.window.download_job.mode, mode)
+            self.assertEqual(self.window.download_job.mode, YouTubeMode.AUDIO)
+            self.assertEqual(self.window.download_job.audio_format, mode)
             self.assertIsNone(self.window.download_job.video_quality)
             self.assertTrue(self.window.quality_options.isHidden())
             self.assertNotIn("available video qualities", self.window.active_status.text())

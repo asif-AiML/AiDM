@@ -34,7 +34,7 @@ class StatusEventTests(unittest.TestCase):
                                           StatusKind.DOWNLOADING_VIDEO, StatusKind.DOWNLOADING_AUDIO,
                                           StatusKind.DOWNLOADING_SUBTITLE,
                                           StatusKind.MERGING, StatusKind.CONVERTING_AUDIO,
-                                          StatusKind.REMUXING, StatusKind.FINALIZING})
+                                          StatusKind.REMUXING, StatusKind.FINALIZING, StatusKind.EMBEDDING_THUMBNAIL})
 
 
 if __name__ == "__main__":
