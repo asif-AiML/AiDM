@@ -41,57 +41,177 @@ The GUI should not become a visual copy of the yt-dlp or aria2c manuals.
 
 ---
 
-## 2. Settings location
+## 2. Settings UI — LOCKED DESIGN
 
-These controls should **not** clutter the main download screen.
+The settings UI should remain simple, minimal and visually secondary to the main downloader.
 
-Add a small gear/settings icon near the top of the application.
+AiDM will use a **right-side settings drawer** rather than replacing or suppressing the main download surface.
+
+### Entry control
+
+Place a compact three-horizontal-bars control in the top-right area of the main AiDM box:
+
+```text
+AiDM                                      ☰
+```
+
+The hamburger/sidebar symbol is preferred over a three-dots menu because the action opens a panel rather than a generic list of actions.
+
+### Opening behavior
+
+When the user activates the control:
+
+1. a settings drawer slides in from the right;
+2. the main AiDM surface remains visible;
+3. the main surface receives a translucent dim overlay;
+4. the main surface becomes temporarily non-interactive while the drawer has focus.
+
+Use a dim overlay rather than a real-time blur effect.
+
+Reason:
+
+- it provides the same visual focus shift;
+- it is simpler and more reliable in PySide6;
+- it avoids inconsistent or expensive blur behavior across Linux desktop environments.
 
 Conceptually:
 
 ```text
-AiDM                                      ⚙
+┌──────────────────────────────────────────────┐
+│ dimmed AiDM surface     │ Download Settings │
+│                         │                   │
+│                         │ Profile           │
+│                         │ [ Balanced ▼ ]   │
+│                         │                   │
+│                         │ PERFORMANCE       │
+│                         │ Connections/file │
+│                         │ [ 4 ▼ ]       ⓘ │
+│                         │                   │
+│                         │ Parallel files   │
+│                         │ [ 4 ▼ ]       ⓘ │
+│                         │                   │
+│                         │ Stream fragments │
+│                         │ [ 4 ▼ ]       ⓘ │
+│                         │                   │
+│                         │ BANDWIDTH         │
+│                         │ Speed limit      │
+│                         │ [ Unlimited ▼ ]ⓘ│
+│                         │                   │
+│                         │ RELIABILITY       │
+│                         │ Retry attempts   │
+│                         │ [ Auto ▼ ]    ⓘ │
+│                         │ Fragment retries │
+│                         │ [ Auto ▼ ]    ⓘ │
+│                         │                   │
+│                         │ [Restore Defaults]│
+└──────────────────────────────────────────────┘
 ```
 
-Opening it reveals a dedicated settings surface with room for future options.
+### Control order
 
-A possible structure:
+The drawer should present controls in this order:
 
 ```text
-Download profile
-[ Balanced ▼ ]                     ⓘ
+Performance profile
 
 PERFORMANCE
-
 Connections per file
-[ 4 ▼ ]                            ⓘ
-
 Parallel files
-[ 4 ▼ ]                            ⓘ
-
-Stream fragments
-[ 4 ▼ ]                            ⓘ
-
+Concurrent stream fragments
 
 BANDWIDTH
-
-Speed limit
-[ Unlimited ▼ ]                    ⓘ
-
+Download speed limit
 
 RELIABILITY
-
 Retry attempts
-[ 10 ▼ ]                           ⓘ
-
 Stream fragment retries
-[ 10 ▼ ]                           ⓘ
 
-
-[ Restore Defaults ]
+Restore Defaults
 ```
 
-This is only a design direction. Exact layout and controls are not yet locked.
+Profiles sit at the top because they provide the quickest high-level performance choice.
+
+### No Save button
+
+There is intentionally **no Save button**.
+
+Every setting change is persisted immediately through `QSettings`.
+
+Conceptually:
+
+```text
+user changes setting
+→ update in-memory settings state
+→ persist to QSettings immediately
+→ show lightweight confirmation
+```
+
+This avoids hidden unsaved state and ensures changes are not lost if the application closes unexpectedly after editing settings.
+
+### Saved notification
+
+After a setting change is persisted, AiDM should show a small non-blocking in-app confirmation such as:
+
+```text
+Settings saved
+```
+
+or:
+
+```text
+Settings saved successfully
+```
+
+This should behave like a lightweight toast/status notification.
+
+It must **not** be a modal dialog requiring an OK click.
+
+Repeated rapid changes may reuse/refresh the same notification rather than stacking multiple popups.
+
+### Closing behavior
+
+The drawer closes when the user:
+
+```text
+clicks ☰ again
+OR
+clicks the dimmed main AiDM area
+```
+
+Closing reverses the animation and restores the normal main UI interaction state.
+
+Closing the drawer does not perform a separate save operation because values are already persisted.
+
+### Animation
+
+Keep animation restrained and functional:
+
+```text
+open  → drawer slides in from the right
+close → drawer slides back to the right
+duration ≈ 180–250 ms
+```
+
+The dim overlay may fade in/out alongside the drawer.
+
+Do not add bouncing, scaling or decorative animation.
+
+### Active-download rule
+
+Opening Settings during an active download must not alter the command of the process already running.
+
+Any changed setting applies to the **next download job**.
+
+Conceptually:
+
+```text
+download A already running
+→ user changes Fast → Balanced
+→ download A continues unchanged
+→ download B uses Balanced settings
+```
+
+This keeps process behavior deterministic and avoids trying to mutate active aria2c or yt-dlp command lines.
 
 ---
 
@@ -1617,17 +1737,17 @@ If AiDM later adds explicit conversion/transcoding features, FFmpeg settings can
 
 ---
 
-## 11. Persistence
+## 11. Persistence — LOCKED DESIGN
 
-User settings should survive application restarts.
+User settings must survive application restarts.
 
-The GUI already uses Qt, so `QSettings` is the preferred persistence mechanism.
+AiDM will use Qt `QSettings`.
 
 Conceptually:
 
 ```text
 AiDM settings
-├─ profile
+├─ performance_profile
 ├─ connections_per_file
 ├─ parallel_files
 ├─ fragment_concurrency
@@ -1636,15 +1756,29 @@ AiDM settings
 └─ fragment_retries
 ```
 
-Once changed, settings remain active until the user changes them again or selects:
+Each change is persisted immediately.
+
+There is no separate Save step.
+
+The active settings remain in effect until the user changes them or activates:
 
 ```text
 Restore Defaults
 ```
 
-The actual download process must consume the stored settings.
+Restore Defaults should ask for a small confirmation before replacing several stored values at once.
 
-Settings should not merely affect UI presentation.
+After persistence succeeds, the GUI may show the locked lightweight in-app notification:
+
+```text
+Settings saved
+```
+
+The actual download command builders must consume the stored values.
+
+Settings must never be cosmetic UI-only state.
+
+Changes made while a download is already running apply only to future jobs.
 
 ---
 
@@ -1823,61 +1957,73 @@ The settings system must follow these rules:
 
 ---
 
-## 14. Open questions for the next discussion
+## 14. Remaining implementation decisions
 
-Before implementation, decide:
+The control contracts, performance profiles and settings drawer UI are now locked.
 
-1. Exact profile names.
-2. Exact default profile.
-3. Exact numeric values for Conservative / Balanced / Fast.
-4. Which values deserve the labels `Recommended` and `Best performance` for the remaining controls. (`Connections per file` is already locked.)
-5. Safe maximum for:
-   - parallel files;
-   - fragment concurrency. (`Connections per file` is locked at 8.)
-6. Whether settings should expose presets only or presets + Custom mode.
-7. Whether changing a single control automatically switches the profile to Custom.
-8. Whether high combined connection counts should show a warning.
-9. Exact tooltip text for every setting.
-10. How one high-level retry setting should map across aria2c and yt-dlp.
-11. Whether bandwidth limit should be global across all engines or configured per engine internally.
-12. Whether the settings surface should be a popover, dialog, stacked page or separate window.
-13. Whether advanced engine names/flags should appear anywhere in the UI.
-14. Whether these settings should initially affect GUI downloads only or be shared with the CLI later.
+Remaining decisions are implementation-level rather than UI-model questions.
+
+Before coding is considered complete, confirm:
+
+1. the exact initial/default persisted state for a brand-new installation, especially how the profile indicator represents AiDM's existing route-specific `Connections per file = Auto` behavior;
+2. whether these settings are initially GUI-only or later shared with the CLI;
+3. the exact PySide6 widget choices and internal settings-state abstraction;
+4. final wording polish for labels and information popovers without changing their locked meaning;
+5. the final Restore Defaults baseline once the new-install default state is locked.
 
 ---
+## 15. Locked design direction
 
-## 15. Current design direction
-
-The current preferred direction is:
+The settings experience is now:
 
 ```text
-⚙ Settings
-   ↓
-simple user-facing controls
-   ↓
-recommended choices clearly marked
-   ↓
-persistent QSettings
-   ↓
+☰
+↓
+right-side settings drawer
+↓
+Performance profile at top
+↓
+simple grouped controls
+↓
+Recommended / compatibility / performance guidance
+↓
+immediate QSettings persistence
+↓
+non-blocking "Settings saved" confirmation
+↓
 route-aware translation
-   ↓
-yt-dlp / aria2c flags
+↓
+aria2c / yt-dlp flags
 ```
 
-The intended experience is:
+The intended user experience is:
 
 ```text
 user wants more control
         ↓
-opens Settings
+opens the side drawer
         ↓
-reads simple explanation
+main AiDM surface stays visible but dimmed
         ↓
-sees Recommended / Best performance guidance
+chooses a profile or individual setting
         ↓
-chooses safely
+AiDM persists the value immediately
         ↓
-AiDM handles engine complexity
+small saved confirmation appears
+        ↓
+user closes drawer by ☰ or dimmed area
+        ↓
+next download job consumes the new settings
 ```
 
-This document should continue evolving through discussion and testing before any implementation begins.
+The first-version settings design is intentionally constrained:
+
+- no raw engine flags;
+- no Custom bandwidth value;
+- no excessive concurrency values;
+- no Save button;
+- no live mutation of an already-running download;
+- no real-time blur requirement;
+- no FFmpeg performance controls.
+
+Implementation should preserve these locked behaviors unless a later design change is explicitly discussed and documented.
