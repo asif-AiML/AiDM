@@ -35,6 +35,7 @@ from gui_execution import create_download_process, ExecutionOutcome, Unsupported
 from gui_metadata import MetadataProcess
 from gui_quality import QualityProcess
 from gui_progress import format_statistics
+from gui_settings_drawer import SettingsDrawer
 from inspection import classify_input, InputKind, MetadataStatus
 from metadata import prepare_metadata
 from status_event import StatusEvent, StatusKind, StatusReason
@@ -379,6 +380,8 @@ class AiDMWindow(QMainWindow):
         layout.addStretch()
 
         self.setCentralWidget(content)
+        self.settings_drawer = SettingsDrawer(content)
+        self.settings_button = self.settings_drawer.button
         # Match visual order across dynamically revealed sections. Qt skips
         # hidden/disabled controls and preserves native radio-group navigation.
         tab_order = (
@@ -386,7 +389,7 @@ class AiDMWindow(QMainWindow):
             self.thumbnail_choice, *self.bulk_buttons.values(),
             self.quality_choice, self.destination_field, self.browse_button,
             self.download_button, self.abort_button, self.retry_button,
-            self.open_folder_button,
+            self.open_folder_button, self.settings_button,
         )
         for current, following in zip(tab_order, tab_order[1:]):
             QWidget.setTabOrder(current, following)
@@ -520,6 +523,8 @@ class AiDMWindow(QMainWindow):
         self._execution_deferred = False
 
     def on_download_intent(self):
+        if self.settings_drawer.blocks_input:
+            return
         if self.current_state != GuiState.READY or not self.usable_input():
             return
         if not self._configuration_started and self.requires_options():

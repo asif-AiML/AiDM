@@ -92,6 +92,7 @@ class GuiOptionsTests(unittest.TestCase):
         return self.workers[-1]
 
     def assert_tab_cycle(self, controls):
+        controls = controls + [self.window.settings_button]
         controls[0].setFocus()
         for expected in controls[1:] + controls[:1]:
             QTest.keyClick(self.window.focusWidget(), Qt.Key.Key_Tab)
@@ -117,6 +118,7 @@ class GuiOptionsTests(unittest.TestCase):
                                window.audio_buttons[AudioFormat.ORIGINAL],
                                window.destination_field, window.browse_button])
         window.input_field.clear()
+        window.settings_button.setFocus()
         QTest.keyClick(window.focusWidget() or window, Qt.Key.Key_Tab)
         self.assertIs(window.focusWidget(), window.input_field)
 

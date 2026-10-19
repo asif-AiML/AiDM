@@ -173,7 +173,7 @@ class GuiExecutionTests(unittest.TestCase):
         self.inspect()
         self.assertIs(window.focusWidget(), window.input_field)
         order = [window.input_field, window.destination_field,
-                 window.browse_button, window.download_button]
+                 window.browse_button, window.download_button, window.settings_button]
         for expected in order[1:] + order[:1]:
             QTest.keyClick(window.focusWidget(), Qt.Key.Key_Tab)
             self.assertIs(window.focusWidget(), expected)
@@ -186,9 +186,10 @@ class GuiExecutionTests(unittest.TestCase):
         for outcome in ("failed", "aborted", "complete"):
             with self.subTest(outcome=outcome):
                 process = self.start()
-                for _ in range(3):
+                window.abort_button.setFocus()
+                for expected in (window.settings_button, window.abort_button, window.settings_button):
                     QTest.keyClick(window.focusWidget() or window, Qt.Key.Key_Tab)
-                    self.assertIs(window.focusWidget(), window.abort_button)
+                    self.assertIs(window.focusWidget(), expected)
                     self.assertTrue(window.focusWidget().isVisible())
                     self.assertTrue(window.focusWidget().isEnabled())
                 for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -210,6 +211,7 @@ class GuiExecutionTests(unittest.TestCase):
                 self.assertTrue(action.isVisible())
                 self.assertTrue(window.rect().contains(action.mapTo(window, action.rect().bottomRight())))
                 window.input_field.clear()
+                window.settings_button.setFocus()
                 QTest.keyClick(window.focusWidget() or window, Qt.Key.Key_Tab)
                 self.assertIs(window.focusWidget(), window.input_field)
 
@@ -224,9 +226,10 @@ class GuiExecutionTests(unittest.TestCase):
         QTest.keyClick(option, Qt.Key.Key_Return)
         self.assertEqual(window.current_state, GuiState.DOWNLOADING)
         self.assertFalse(option.isVisible())
-        for _ in range(3):
+        window.abort_button.setFocus()
+        for expected in (window.settings_button, window.abort_button, window.settings_button):
             QTest.keyClick(window.focusWidget() or window, Qt.Key.Key_Tab)
-            self.assertIs(window.focusWidget(), window.abort_button)
+            self.assertIs(window.focusWidget(), expected)
         window.abort_button.click()
 
     def test_aborting_disabled_button_does_not_trap_focus(self):
