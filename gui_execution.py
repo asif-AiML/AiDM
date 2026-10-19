@@ -406,6 +406,36 @@ class DirectBulkDownloadProcess(DownloadProcess):
         return stopped
 
 
+class GenericDownloadProcess(DownloadProcess):
+    """Let yt-dlp extract an unverified URL using the existing transfer policy."""
+
+    engine = "yt-dlp"
+    owns_process_group = True
+
+    def __init__(self, job: DownloadJob, parent=None):
+        if job.kind != InputKind.GENERIC_YTDLP:
+            raise ValueError("Generic execution requires GENERIC_YTDLP")
+        super().__init__(job, parent)
+        self._progress_parser = YtDlpProgressParser()
+        self._last_status = None
+
+    def build_command(self):
+        return build_ytdlp_media_command(
+            self.job.urls[0], self.job.title,
+            destination=self.job.destination, telemetry=True,
+        )
+
+    def consume_stdout(self, chunk, *, final=False):
+        for event in self._progress_parser.feed(chunk, final=final):
+            if self.done or self.closing or self.abort_requested:
+                break
+            if isinstance(event, ProgressEvent):
+                self.progress_event.emit(event)
+            elif isinstance(event, StatusEvent) and event != self._last_status:
+                self._last_status = event
+                self.status_event.emit(event)
+
+
 class StreamInspectorDownloadProcess(DownloadProcess):
     """One browser-assisted attempt: main media, then an optional subtitle."""
 
@@ -594,6 +624,8 @@ def create_download_process(job: DownloadJob, parent=None) -> DownloadProcess:
         return DirectDownloadProcess(job, parent)
     if job.kind == InputKind.DIRECT_BULK:
         return DirectBulkDownloadProcess(job, parent)
+    if job.kind == InputKind.GENERIC_YTDLP:
+        return GenericDownloadProcess(job, parent)
     if job.kind in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK, InputKind.YOUTUBE_PLAYLIST}:
         return YouTubeDownloadProcess(job, parent)
     raise UnsupportedExecution("GUI execution is not implemented for this job")

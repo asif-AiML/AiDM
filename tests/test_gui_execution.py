@@ -17,10 +17,14 @@ except ImportError:
     raise unittest.SkipTest("GUI execution checks require PySide6")
 
 from aidm_gui import AiDMWindow, GuiState, render_status
-from download_job import AudioFormat, BulkMode, DownloadJob, YouTubeMode
-from downloader import build_direct_command
-from gui_execution import DirectDownloadProcess, DownloadProcess, ExecutionOutcome
-from inspection import InputKind, InspectionResult
+from download_job import AudioFormat, BulkMode, DownloadJob, YouTubeMode, VideoQuality
+from downloader import build_direct_command, build_ytdlp_media_command
+from gui_execution import (
+    DirectDownloadProcess, DirectBulkDownloadProcess, DownloadProcess, ExecutionOutcome,
+    GenericDownloadProcess, StreamInspectorDownloadProcess, YouTubeDownloadProcess,
+    create_download_process,
+)
+from inspection import InputKind, InspectionResult, classify_input
 from stream_parser import StreamInput
 from status_event import StatusEvent, StatusKind, StatusReason
 from progress_event import ProgressEvent
@@ -799,8 +803,119 @@ class GuiExecutionTests(unittest.TestCase):
                          "Download folder is unavailable — choose another folder. 📁⚠️")
         self.assertFalse(self.window.destination_section.isHidden())
 
+    def test_generic_classification_launches_existing_ytdlp_command(self):
+        window = self.window
+        url = "https://example.test/watch/item?token=a%2Fb&x=1"
+        window.input_field.setText(url)
+        window._inspection_timer.stop()
+        window._pending = None
+        with patch("inspection.detect_stream_type", return_value=None), \
+                patch("inspection.looks_like_direct_file", return_value=False):
+            result = classify_input(window.input_result.args)
+        self.assertEqual(result.kind, InputKind.GENERIC_YTDLP)
+        window.finish_inspection(window._revision, result, "")
+        window._metadata_timer.stop()
+        window.download_button.click()
+        worker = window._download_process
+        self.assertIsInstance(worker, GenericDownloadProcess)
+        self.assertEqual(window.current_state, GuiState.DOWNLOADING)
+        self.assertFalse(window._execution_deferred)
+        self.assertNotIn("execution is not implemented", window.active_status.text())
+        self.assertEqual(window.active_status.text(), "Starting yt-dlp… ⚙️")
+        expected = build_ytdlp_media_command(url, destination=str(self.directory), telemetry=True)
+        self.assertEqual(worker.process.calls, [(expected[0], expected[1:])])
+        self.assertTrue(worker.owns_process_group)
+        self.assertEqual(worker.process.unix_flags, QProcess.UnixProcessFlag.CreateNewSession)
+        worker.process.finish()
+
+    def test_generic_uses_shared_builder_with_optional_title(self):
+        for title in (None, "Site / media title"):
+            job = DownloadJob(InputKind.GENERIC_YTDLP, ("https://example.test/watch/123",),
+                              str(self.directory), title=title)
+            worker = create_download_process(job, self.window)
+            self.assertEqual(worker.build_command(), build_ytdlp_media_command(
+                job.urls[0], title, destination=job.destination, telemetry=True))
+
+    def test_generic_native_and_aria2_progress_and_postprocessing(self):
+        self.inspect(InputKind.GENERIC_YTDLP)
+        self.window.download_button.click()
+        worker = self.window._download_process
+        worker.process.begin()
+        statuses = []
+        worker.status_event.connect(statuses.append)
+        native = (b'AIDM_PROGRESS:{"progress":{"status":"downloading",'
+                  b'"downloaded_bytes":25,"total_bytes":100},"info":{}}\n')
+        for chunk in (native[:30], native[30:], native):
+            worker.process.stdout = chunk
+            worker.process.readyReadStandardOutput.emit()
+        self.assertEqual(self.window._progress_event.percent, 25)
+        self.assertEqual(len(statuses), 1)  # Repeated status is deduplicated.
+        worker.process.stdout = b'[#44b163 50B/100B(50%) CN:1 DL:10B ETA:5s]\n'
+        worker.process.readyReadStandardOutput.emit()
+        self.assertEqual(self.window._progress_event.percent, 50)
+        worker.process.stdout = b'AIDM_POSTPROCESS:{"status":"started","postprocessor":"Merger"}\n'
+        worker.process.readyReadStandardOutput.emit()
+        self.assertEqual(self.window._download_event.kind, StatusKind.MERGING)
+        self.assertIsNone(self.window._progress_event.percent)
+        worker.process.finish()
+        self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+
+    def test_generic_failure_abort_retry_and_start_failure(self):
+        for outcome in ("failure", "abort", "start_failure"):
+            with self.subTest(outcome=outcome):
+                self.window.input_field.clear()
+                self.inspect(InputKind.GENERIC_YTDLP)
+                self.window.download_button.click()
+                worker = self.window._download_process
+                command = worker.process.calls[0]
+                if outcome == "start_failure":
+                    worker.process.current_state = QProcess.ProcessState.NotRunning
+                    worker.process.errorOccurred.emit(QProcess.ProcessError.FailedToStart)
+                else:
+                    worker.process.begin()
+                    if outcome == "abort":
+                        self.window.abort_button.click()
+                        self.assertIn("terminate", worker.process.calls)
+                    else:
+                        worker.process.finish(1)
+                expected = GuiState.ABORTED if outcome == "abort" else GuiState.FAILED
+                self.assertEqual(self.window.current_state, expected)
+                self.window.retry_button.click()
+                retry = self.window._download_process
+                self.assertIsNot(retry, worker)
+                self.assertIs(retry.job, worker.job)
+                self.assertEqual(retry.process.calls[0], command)
+                worker.status_event.emit(StatusEvent(StatusKind.COMPLETE, "yt-dlp"))
+                worker.finished.emit(ExecutionOutcome.COMPLETE)
+                self.assertEqual(self.window.current_state, GuiState.DOWNLOADING)
+                retry.process.finish()
+                self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+
+    def test_specific_route_dispatch_is_unchanged(self):
+        cases = [
+            (InputKind.DIRECT_SINGLE, {}, DirectDownloadProcess),
+            (InputKind.DIRECT_BULK, {"bulk_mode": BulkMode.SEQUENTIAL}, DirectBulkDownloadProcess),
+            (InputKind.DIRECT_BULK, {"bulk_mode": BulkMode.PARALLEL}, DirectBulkDownloadProcess),
+            (InputKind.YOUTUBE_SINGLE, {"mode": YouTubeMode.VIDEO,
+                                       "video_quality": VideoQuality.BEST}, YouTubeDownloadProcess),
+            (InputKind.YOUTUBE_BULK, {"mode": YouTubeMode.ORIGINAL_AUDIO}, YouTubeDownloadProcess),
+            (InputKind.YOUTUBE_PLAYLIST, {"video_quality": VideoQuality.BEST}, YouTubeDownloadProcess),
+        ]
+        for route in (InputKind.HLS, InputKind.DASH, InputKind.GENERIC_YTDLP,
+                      InputKind.DIRECT_SINGLE, InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_PLAYLIST):
+            cases.append((InputKind.STREAM_INSPECTOR, {"route_kind": route}, StreamInspectorDownloadProcess))
+        for kind, options, adapter in cases:
+            with self.subTest(kind=kind, options=options):
+                urls = ("https://example.test/a", "https://example.test/b") if kind in {
+                    InputKind.DIRECT_BULK, InputKind.YOUTUBE_BULK,
+                } else ("https://example.test/a",)
+                job = DownloadJob(kind, urls, str(self.directory), **options)
+                self.assertIs(type(create_download_process(job, self.window)), adapter)
+                with self.assertRaises(ValueError):
+                    GenericDownloadProcess(job, self.window)
+
     def test_unimplemented_routes_remain_deferred(self):
-        for kind in (InputKind.HLS, InputKind.DASH, InputKind.GENERIC_YTDLP,
+        for kind in (InputKind.HLS, InputKind.DASH,
                      InputKind.TORRENT):
             self.window.input_field.clear()
             self.inspect(kind, InputKind.DIRECT_SINGLE if kind == InputKind.STREAM_INSPECTOR else None)

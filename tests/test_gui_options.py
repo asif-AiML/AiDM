@@ -279,13 +279,21 @@ class GuiOptionsTests(unittest.TestCase):
         self.assertEqual(self.workers, [])
 
     def test_simple_routes_have_no_options_or_execution(self):
-        for kind in (InputKind.HLS, InputKind.DASH,
-                     InputKind.GENERIC_YTDLP):
+        for kind in (InputKind.HLS, InputKind.DASH):
             self.paste(kind, f"https://example.test/{kind.name}")
             self.window.download_button.click()
             self.assertFalse(self.window._configuration_started)
             self.assertIsNotNone(self.window.download_job)
             self.assertEqual(self.window.current_state, GuiState.READY)
+        self.assertEqual(self.workers, [])
+
+    def test_generic_route_starts_without_extra_options(self):
+        self.paste(InputKind.GENERIC_YTDLP, "https://example.test/watch/123")
+        with patch.object(self.window, "start_download") as start:
+            self.window.download_button.click()
+            start.assert_called_once_with(self.window.download_job)
+        self.assertFalse(self.window._configuration_started)
+        self.assertIsNotNone(self.window.download_job)
         self.assertEqual(self.workers, [])
 
     def test_enter_mirrors_download_and_does_not_bypass_choices(self):
