@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from download_job import AudioFormat, DownloadJob, YouTubeMode, BulkMode, VideoQuality, build_download_job
+from download_settings import DownloadSettings
 from gui_input import validate_gui_input
 from gui_execution import create_download_process, ExecutionOutcome, UnsupportedExecution
 from gui_metadata import MetadataProcess
@@ -188,6 +189,7 @@ class AiDMWindow(QMainWindow):
     def __init__(self, *, settings: QSettings | None = None) -> None:
         super().__init__()
         self.settings = settings if settings is not None else QSettings("AiDM", "AiDM")
+        self.download_settings = DownloadSettings(self.settings)
         self.destination = initial_destination(self.settings)
         self.setWindowTitle("AiDM v0.1.0")
         self.resize(480, 200)
@@ -751,6 +753,7 @@ class AiDMWindow(QMainWindow):
                     self.inspection_result, destination=self.checked_destination(),
                     mode=mode, video_quality=quality, bulk_mode=bulk,
                     audio_format=audio_format, embed_thumbnail=self.thumbnail_choice.isChecked(),
+                    settings=self.download_settings.values,
                 )
             except ValueError as error:
                 self._configuration_error = str(error)
@@ -828,6 +831,7 @@ class AiDMWindow(QMainWindow):
             self.inspection_result, destination=self.checked_destination(), mode=mode,
             video_quality=video_quality, bulk_mode=bulk_mode,
             audio_format=audio_format, embed_thumbnail=embed_thumbnail,
+            settings=self.download_settings.values,
         )
 
     def start_metadata(self) -> None:

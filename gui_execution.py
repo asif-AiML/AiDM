@@ -272,7 +272,8 @@ class DirectDownloadProcess(DownloadProcess):
         self._progress_parser = Aria2ProgressParser(self.on_filename)
 
     def build_command(self):
-        return build_direct_command(self.job.urls[0], self.job.destination, telemetry=True)
+        return build_direct_command(self.job.urls[0], self.job.destination, telemetry=True,
+                                    settings=self.job.settings)
 
     def consume_stdout(self, chunk, *, final=False):
         for event in self._progress_parser.feed(chunk, final=final):
@@ -307,7 +308,8 @@ class DirectBulkDownloadProcess(DownloadProcess):
 
     def build_command(self):
         if not self._parallel:
-            return build_direct_command(self.job.urls[self._index - 1], self.job.destination, telemetry=True)
+            return build_direct_command(self.job.urls[self._index - 1], self.job.destination, telemetry=True,
+                                        settings=self.job.settings)
         if self._input_directory is None:
             self._input_directory = TemporaryDirectory(prefix="aidm-gui-bulk-")
             input_path = Path(self._input_directory.name) / "urls.txt"
@@ -315,6 +317,7 @@ class DirectBulkDownloadProcess(DownloadProcess):
         return build_direct_bulk_parallel_command(
             str(Path(self._input_directory.name) / "urls.txt"), len(self.job.urls),
             self.job.destination, telemetry=True,
+            settings=self.job.settings,
         )
 
     def start(self):
@@ -423,6 +426,7 @@ class GenericDownloadProcess(DownloadProcess):
         return build_ytdlp_media_command(
             self.job.urls[0], self.job.title,
             destination=self.job.destination, telemetry=True,
+            settings=self.job.settings,
         )
 
     def consume_stdout(self, chunk, *, final=False):
@@ -461,7 +465,7 @@ class StreamInspectorDownloadProcess(DownloadProcess):
             return build_subtitle_command(
                 self._subtitle_url, job.title, job.headers, destination=job.destination,
             )
-        options = dict(destination=job.destination, telemetry=True)
+        options = dict(destination=job.destination, telemetry=True, settings=job.settings)
         stream_type = {InputKind.HLS: "hls", InputKind.DASH: "dash"}.get(job.route_kind)
         if stream_type is not None:
             return build_stream_command(StreamInput(
@@ -561,7 +565,7 @@ class YouTubeDownloadProcess(DownloadProcess):
         self._batch = SequentialBatchProgress(total) if total is not None else None
 
     def build_command(self):
-        options = dict(destination=self.job.destination, telemetry=True)
+        options = dict(destination=self.job.destination, telemetry=True, settings=self.job.settings)
         if self.job.kind == InputKind.YOUTUBE_PLAYLIST:
             height = None if self.job.video_quality == VideoQuality.BEST else self.job.video_quality
             return build_youtube_playlist_command(self.job.urls[0], height, **options)

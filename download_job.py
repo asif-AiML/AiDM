@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Mapping
 
 from inspection import InputKind, InspectionResult
+from download_settings import SettingsValues
 
 
 class YouTubeMode(Enum):
@@ -60,8 +61,11 @@ class DownloadJob:
     item_count: int | None = None
     audio_format: AudioFormat | None = None
     embed_thumbnail: bool = False
+    settings: SettingsValues | None = None
 
     def __post_init__(self) -> None:
+        if self.settings is not None and not isinstance(self.settings, SettingsValues):
+            raise ValueError("settings must be a validated SettingsValues snapshot or None")
         # Filesystem availability belongs to the frontend/execution boundary.
         # Keep a normalized absolute snapshot without probing or creating paths.
         if (not isinstance(self.destination, str) or not self.destination.strip()
@@ -150,6 +154,7 @@ def build_download_job(
     bulk_mode: BulkMode | None = None,
     audio_format: AudioFormat | None = None,
     embed_thumbnail: bool = False,
+    settings: SettingsValues | None = None,
 ) -> DownloadJob:
     """Snapshot classification and explicit choices; never inspect or execute."""
     if result.error is not None:
@@ -174,4 +179,5 @@ def build_download_job(
         route_kind=result.route_kind,
         item_count=result.item_count if result.route == InputKind.YOUTUBE_PLAYLIST else None,
         audio_format=audio_format, embed_thumbnail=embed_thumbnail,
+        settings=settings,
     )

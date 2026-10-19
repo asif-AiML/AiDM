@@ -566,7 +566,7 @@ class GuiExecutionTests(unittest.TestCase):
             self.window.on_download_intent()
             self.window.download_button.click()
             worker.start()
-            build.assert_called_once_with(job.urls[0], job.destination, telemetry=True)
+            build.assert_called_once_with(job.urls[0], job.destination, telemetry=True, settings=job.settings)
         self.assertEqual(worker.job, job)
         command = build_direct_command(job.urls[0], job.destination, telemetry=True)
         self.assertEqual(worker.process.calls, [(command[0], command[1:])])

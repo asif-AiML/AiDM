@@ -3,7 +3,8 @@ import subprocess
 from pathlib import Path
 
 from download_job import AudioFormat, validate_audio_options
-from downloader import ARIA2_DOWNLOADER_ARGUMENTS, ARIA2_GUI_TELEMETRY_ARGUMENTS
+from downloader import build_aria2_downloader_arguments
+from download_settings import SettingsValues
 from utils import run_command
 from ytdlp_progress import ITEM_TEMPLATE, PLAYLIST_ITEM_TEMPLATE, ytdlp_telemetry_options
 
@@ -153,6 +154,7 @@ def choose_youtube_audio_options() -> tuple[AudioFormat, bool]:
 def build_youtube_command(
     total_videos: int | None = None, *, destination: str | None = None,
     telemetry: bool = False,
+    settings: SettingsValues | None = None,
 ) -> list[str]:
     command = [
         "yt-dlp",
@@ -161,10 +163,7 @@ def build_youtube_command(
         "--downloader",
         "dash,m3u8:native",
         "--downloader-args",
-        ARIA2_DOWNLOADER_ARGUMENTS + (
-            ARIA2_GUI_TELEMETRY_ARGUMENTS
-            if telemetry else ""
-        ),
+        build_aria2_downloader_arguments(settings, telemetry=telemetry),
     ]
 
     if total_videos is not None:
@@ -187,9 +186,11 @@ def build_youtube_video_command(
     max_height: int | None = None,
     total_videos: int | None = None,
     *, destination: str | None = None, telemetry: bool = False,
+    settings: SettingsValues | None = None,
 ) -> list[str]:
     """Resolution first, native MP4/M4A preferred, stream-copy final MP4."""
-    command = build_youtube_command(total_videos, destination=destination, telemetry=telemetry)
+    command = build_youtube_command(total_videos, destination=destination, telemetry=telemetry,
+                                    settings=settings)
     command.extend([
         "-f", build_youtube_format(max_height),
         "--format-sort", "res,ext:mp4:m4a",
@@ -204,6 +205,7 @@ def build_youtube_audio_command(
     total_videos: int | None = None, *, wav: bool = False,
     destination: str | None = None, telemetry: bool = False,
     audio_format: AudioFormat = AudioFormat.ORIGINAL, embed_thumbnail: bool = False,
+    settings: SettingsValues | None = None,
 ) -> list[str]:
     """Shared format policy; optional artwork never changes the audio container."""
     if wav:
@@ -211,7 +213,8 @@ def build_youtube_audio_command(
             raise ValueError("wav conflicts with audio_format")
         audio_format = AudioFormat.WAV
     validate_audio_options(audio_format, embed_thumbnail)
-    command = build_youtube_command(total_videos, destination=destination, telemetry=telemetry)
+    command = build_youtube_command(total_videos, destination=destination, telemetry=telemetry,
+                                    settings=settings)
     command.extend(["-f", "bestaudio/best"])
     if audio_format != AudioFormat.ORIGINAL:
         command.extend(["--extract-audio", "--audio-format", audio_format.value])
@@ -244,9 +247,11 @@ def download_youtube_video(urls: list[str], max_height: int | None = None) -> in
 def build_youtube_playlist_command(
     url: str, max_height: int | None = None, *,
     destination: str | None = None, telemetry: bool = False,
+    settings: SettingsValues | None = None,
 ) -> list[str]:
     """The same video policy, with playlist traversal and optional item records."""
-    command = build_youtube_video_command(max_height, destination=destination, telemetry=telemetry)
+    command = build_youtube_video_command(max_height, destination=destination, telemetry=telemetry,
+                                          settings=settings)
     if telemetry:
         command.extend(["--print", PLAYLIST_ITEM_TEMPLATE, "--no-quiet", "--progress"])
     return command + ["--yes-playlist", url]

@@ -287,7 +287,7 @@ class DirectBulkGuiTests(unittest.TestCase):
         path = self.input_path(worker)
         self.assertEqual(path.read_text(), '\n'.join(worker.job.urls) + '\n')
         self.assertIn('--dir=' + worker.job.destination, worker.process.calls[0][1])
-        self.assertIn('--max-concurrent-downloads=2', worker.process.calls[0][1])
+        self.assertIn('--max-concurrent-downloads=4', worker.process.calls[0][1])
         worker.process.begin()
         self.feed(worker, summary(('abcdef', 50, 100, 50, 10), ('fedcba', 20, 200, 10, 20)))
         self.assertEqual(self.window.queue_position.text(), '2 files • 2 active • 0 complete')

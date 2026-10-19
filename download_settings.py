@@ -1,14 +1,18 @@
-"""Persistent download preferences; M0 does not connect these to jobs or commands.
+"""Validated download preferences and their optional Qt persistence wrapper.
 
 Auto stays unresolved here: connections mean 1 for direct transfers and 8 for
 normal YouTube transfers delegated to aria2c. Retry Auto preserves the actual
-transfer engine's defaults. Route-specific application belongs to a later step.
+transfer engine's defaults. Command builders resolve these per transfer path.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
 from enum import Enum
+from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSettings
+if TYPE_CHECKING:
+    from PySide6.QtCore import QSettings
 
 
 class ConnectionsPerFile(Enum):
@@ -143,6 +147,8 @@ class DownloadSettings:
     GROUP = "download_settings"
 
     def __init__(self, settings: QSettings | None = None):
+        from PySide6.QtCore import QSettings
+
         self._settings = settings if settings is not None else QSettings("AiDM", "AiDM")
         values = {}
         for field in fields(DEFAULT_VALUES):
@@ -169,7 +175,7 @@ class DownloadSettings:
         for name, value in normalized.items():
             self._settings.setValue(f"{self.GROUP}/{name}", value.value)
         self._settings.sync()
-        if self._settings.status() != QSettings.Status.NoError:
+        if self._settings.status() != self._settings.Status.NoError:
             raise OSError("Could not save AiDM download settings")
         self._values = values
 
