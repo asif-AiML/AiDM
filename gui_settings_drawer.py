@@ -2,10 +2,11 @@
 
 import sys
 
-from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, Property, QSignalBlocker, Qt, Signal
+from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, Property, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFrame, QLabel, QScrollArea, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QFrame, QLabel, QMessageBox, QPushButton, QScrollArea,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
 from download_settings import (
@@ -145,7 +146,26 @@ class SettingsDrawer(QWidget):
                 layout.addWidget(combo)
                 self.setting_choices[name] = combo
                 combo.currentIndexChanged.connect(lambda index, name=name: self._update_setting(name, index))
+        layout.addSpacing(8)
+        self.restore_button = QPushButton("Restore Defaults")
+        self.restore_button.setAccessibleName("Restore default download settings")
+        self.restore_button.clicked.connect(self._restore_defaults)
+        layout.addWidget(self.restore_button)
         layout.addStretch()
+        # Reserve one quiet footer line so notifications do not move the form.
+        self.saved_notice = QLabel("Settings saved")
+        self.saved_notice.setAccessibleName("Settings saved")
+        self.saved_notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.saved_notice.setContentsMargins(0, 4, 0, 4)
+        policy = self.saved_notice.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.saved_notice.setSizePolicy(policy)
+        panel_layout.addWidget(self.saved_notice)
+        self.saved_notice.hide()
+        self.saved_timer = QTimer(self)
+        self.saved_timer.setSingleShot(True)
+        self.saved_timer.setInterval(2000)
+        self.saved_timer.timeout.connect(self.saved_notice.hide)
         self.combos = (self.profile_choice, *self.setting_choices.values())
         self.profile_choice.currentIndexChanged.connect(self._apply_profile)
         self.refresh_from_settings()
@@ -159,7 +179,7 @@ class SettingsDrawer(QWidget):
         self.button.setAccessibleName("Open settings")
         self.button.clicked.connect(lambda: self.set_open(not self.is_open))
         self.button.resize(self.button.sizeHint().expandedTo(self.button.minimumSizeHint()))
-        self.focus_order = (*self.combos, self.button)
+        self.focus_order = (*self.combos, self.restore_button, self.button)
 
         self.animation = QPropertyAnimation(self, b"reveal", self)
         self.animation.setDuration(210)
@@ -187,7 +207,9 @@ class SettingsDrawer(QWidget):
         try:
             if value is not None:
                 self.settings.update(**{name: value})
+                self._show_saved()
         except OSError as error:
+            self._hide_saved()
             print(str(error), file=sys.stderr)
         finally:
             self.refresh_from_settings()
@@ -197,10 +219,48 @@ class SettingsDrawer(QWidget):
         try:
             if profile is not None and profile != PerformanceProfile.CUSTOM:
                 self.settings.apply_profile(profile)
+                self._show_saved()
         except OSError as error:
+            self._hide_saved()
             print(str(error), file=sys.stderr)
         finally:
             self.refresh_from_settings()
+
+    def _show_saved(self):
+        if self.is_open:
+            self.saved_notice.show()
+            self.saved_timer.start()
+
+    def _hide_saved(self):
+        self.saved_timer.stop()
+        self.saved_notice.hide()
+
+    def _confirm_restore(self):
+        dialog = QMessageBox(self.panel)
+        dialog.setWindowTitle("Restore Defaults")
+        dialog.setText("Restore all download settings to AiDM defaults?")
+        dialog.setIcon(QMessageBox.Icon.Question)
+        restore = dialog.addButton("Restore", QMessageBox.ButtonRole.AcceptRole)
+        cancel = dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.setDefaultButton(cancel)
+        dialog.setEscapeButton(cancel)
+        try:
+            dialog.exec()
+            return dialog.clickedButton() is restore
+        finally:
+            dialog.deleteLater()
+
+    def _restore_defaults(self):
+        if self._confirm_restore():
+            try:
+                self.settings.reset_to_defaults()
+                self._show_saved()
+            except OSError as error:
+                self._hide_saved()
+                print(str(error), file=sys.stderr)
+            finally:
+                self.refresh_from_settings()
+        self.restore_button.setFocus(Qt.FocusReason.OtherFocusReason)
 
     @property
     def blocks_input(self):
@@ -260,6 +320,7 @@ class SettingsDrawer(QWidget):
     def hideEvent(self, event):
         # Also handles the containing window closing during an animation.
         self.animation.stop()
+        self._hide_saved()
         QApplication.instance().removeEventFilter(self)
         self.is_open = False
         self.button.setChecked(False)
@@ -311,6 +372,6 @@ class SettingsDrawer(QWidget):
         if event.type() == QEvent.Type.FocusIn:
             if not inside:
                 self.profile_choice.setFocus(Qt.FocusReason.OtherFocusReason)
-            elif watched in self.combos:
+            elif watched in self.combos or watched is self.restore_button:
                 self.scroll_area.ensureWidgetVisible(watched, 0, 24)
         return False
