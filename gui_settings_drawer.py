@@ -1,8 +1,12 @@
-"""Settings navigation shell only; no preferences or download state live here."""
+"""Settings drawer UI backed by the window's shared preferences model."""
 
-from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, Property, Qt, Signal
+import sys
+
+from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, Property, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QApplication, QFrame, QLabel, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QLabel, QToolButton, QVBoxLayout, QWidget
+
+from download_settings import DownloadSettings, PerformanceProfile
 
 
 class DimOverlay(QWidget):
@@ -31,8 +35,9 @@ class SettingsDrawer(QWidget):
 
     transition_finished = Signal(bool)
 
-    def __init__(self, parent):
+    def __init__(self, parent, settings: DownloadSettings):
         super().__init__(parent)
+        self.settings = settings
         self.is_open = False
         self._reveal = 0.0
         self.overlay = DimOverlay(self)
@@ -50,7 +55,19 @@ class SettingsDrawer(QWidget):
         font.setBold(True)
         self.heading.setFont(font)
         layout.addWidget(self.heading)
+        self.profile_label = QLabel("Profile")
+        self.profile_choice = QComboBox()
+        self.profile_choice.setAccessibleName("Performance profile")
+        self.profile_label.setBuddy(self.profile_choice)
+        for profile in PerformanceProfile:
+            self.profile_choice.addItem(profile.value, profile)
+        custom_index = self.profile_choice.findData(PerformanceProfile.CUSTOM)
+        self.profile_choice.model().item(custom_index).setEnabled(False)
+        layout.addWidget(self.profile_label)
+        layout.addWidget(self.profile_choice)
         layout.addStretch()
+        self.profile_choice.currentIndexChanged.connect(self._apply_profile)
+        self.refresh_from_settings()
 
         # A sibling of the overlay layer, so it remains clickable above it.
         self.button = QToolButton(parent)
@@ -74,6 +91,21 @@ class SettingsDrawer(QWidget):
         # Scope keyboard interception to this window, without disabling or
         # changing the focus policies of dynamically rendered main controls.
         parent.installEventFilter(self)
+
+    def refresh_from_settings(self):
+        """Reflect derived values without applying a preset or writing settings."""
+        with QSignalBlocker(self.profile_choice):
+            self.profile_choice.setCurrentIndex(self.profile_choice.findData(self.settings.profile))
+
+    def _apply_profile(self, index):
+        profile = self.profile_choice.itemData(index)
+        try:
+            if profile is not None and profile != PerformanceProfile.CUSTOM:
+                self.settings.apply_profile(profile)
+        except OSError as error:
+            print(str(error), file=sys.stderr)
+        finally:
+            self.refresh_from_settings()
 
     @property
     def blocks_input(self):
@@ -109,13 +141,16 @@ class SettingsDrawer(QWidget):
         self.button.setAccessibleName("Close settings" if opened else "Open settings")
         self.animation.stop()
         if opened:
+            self.refresh_from_settings()
             QApplication.instance().installEventFilter(self)
             self.show()
             self.overlay.show()
             self.panel.show()
             self.raise_()
             self.button.raise_()
-            self.panel.setFocus(Qt.FocusReason.OtherFocusReason)
+            self.profile_choice.setFocus(Qt.FocusReason.OtherFocusReason)
+        else:
+            self.profile_choice.hidePopup()
         self.animation.setStartValue(self._reveal)
         self.animation.setEndValue(1.0 if opened else 0.0)
         self.animation.start()
@@ -144,23 +179,32 @@ class SettingsDrawer(QWidget):
             # Qt defers resizeEvent for hidden widgets; position the visible
             # sibling toggle immediately even while the drawer is closed.
             self._position_widgets()
-        if not self.blocks_input or not isinstance(watched, QWidget) or watched.window() is not self.window():
+        if not self.blocks_input or not isinstance(watched, QWidget):
             return False
-        inside = watched is self.button or watched is self.panel or self.panel.isAncestorOf(watched)
+        # QWidget.isAncestorOf does not cross the combo's popup window boundary.
+        in_popup = watched.window() is self.profile_choice.view().window()
+        inside = (watched is self.button or watched is self.panel or self.panel.isAncestorOf(watched)
+                  or in_popup)
+        if not inside and watched.window() is not self.window():
+            return False
         if event.type() == QEvent.Type.ShortcutOverride:
+            if in_popup:
+                return False  # Qt's combo popup handles its own selection shortcuts.
             event.accept()  # Prevent window-wide Download shortcuts reaching the main UI.
             return True
         if event.type() == QEvent.Type.KeyPress:
             if event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
-                target = self.panel if QApplication.focusWidget() is self.button else self.button
+                self.profile_choice.hidePopup()
+                target = self.profile_choice if QApplication.focusWidget() is self.button else self.button
                 target.setFocus(Qt.FocusReason.TabFocusReason)
                 return True
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 if watched is self.button:
                     self.set_open(not self.is_open)
-                return True
+                    return True
+                return not inside or watched is self.panel
             if not inside:
                 return True
         if event.type() == QEvent.Type.FocusIn and not inside:
-            self.panel.setFocus(Qt.FocusReason.OtherFocusReason)
+            self.profile_choice.setFocus(Qt.FocusReason.OtherFocusReason)
         return False

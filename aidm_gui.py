@@ -380,7 +380,7 @@ class AiDMWindow(QMainWindow):
         layout.addStretch()
 
         self.setCentralWidget(content)
-        self.settings_drawer = SettingsDrawer(content)
+        self.settings_drawer = SettingsDrawer(content, self.download_settings)
         self.settings_button = self.settings_drawer.button
         # Match visual order across dynamically revealed sections. Qt skips
         # hidden/disabled controls and preserves native radio-group navigation.
