@@ -4,6 +4,20 @@
 > **Branch:** `feat/controls-settings`  
 > **Purpose:** Define safe, GUI-friendly control over selected yt-dlp and aria2c behavior before implementation.
 
+**Implementation / validation note (M8):** The locked controls are implemented through M6.5.
+The design discussion below is retained as the original contract. Settings are GUI-facing;
+CLI callers that omit a settings snapshot retain legacy behavior. QSettings stores the six
+control values; the profile is derived from the three performance values, not stored as an
+independent source of truth. New jobs capture immutable snapshots; Retry keeps the original
+job's snapshot.
+
+The user reports manual verification of drawer behavior, profile switching, individual-control
+synchronization, exact profile detection, persistence across restarts, and general GUI behavior.
+Live direct, direct bulk parallel, YouTube, browser-assisted HLS/DASH, and generic yt-dlp
+fallback download checks remain deferred because internet data is limited. Offline command
+and lifecycle tests verify wiring in the meantime; deferred network checks do not block
+implementation completion.
+
 ---
 
 ## 1. Goal
@@ -1991,6 +2005,14 @@ The current GUI's strongest yt-dlp-native use case is therefore the browser-assi
 If the Inspector route ultimately uses yt-dlp as an extractor and delegates the actual transfer to aria2c, aria2c transfer controls apply instead.
 
 AiDM should decide this internally from the actual command path.
+
+### Subtitle sidecars — intentional exception
+
+The applicability rules above concern primary media transfers. Optional subtitle sidecars
+remain internal utility downloads using their existing aria2c command and internal/default
+transfer behavior. They do not receive configurable connections, parallelism, speed limits,
+or retry overrides from `DownloadJob.settings`. This exception also applies after a primary
+transfer that uses explicit settings.
 
 ### Naked HLS/DASH
 
