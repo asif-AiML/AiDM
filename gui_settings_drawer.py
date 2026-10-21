@@ -2,10 +2,10 @@
 
 import sys
 
-from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, Property, QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QEasingCurve, QPoint, QPropertyAnimation, Property, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFrame, QLabel, QMessageBox, QPushButton, QScrollArea,
+    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea,
     QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -58,6 +58,38 @@ SETTING_SECTIONS = (
         )),
     )),
 )
+
+
+SETTING_HELP = {
+    "profile": ("Performance profile",
+        "Quick presets for the three performance controls below. Custom appears when those "
+        "settings do not match a preset.\n\nBandwidth and retry settings are not changed by profiles."),
+    "connections_per_file": ("Connections per file",
+        "Controls connections aria2c may use for one file. More can improve speed, but some servers "
+        "restrict multiple connections.\n\nAuto keeps AiDM's tested defaults: 1 for direct downloads "
+        "and 8 for normal YouTube downloads using aria2c.\n\nApplies to aria2c primary transfers, "
+        "not yt-dlp-native HLS/DASH fragments. Subtitle sidecars use AiDM's internal defaults."),
+    "parallel_files": ("Parallel files",
+        "Controls how many files aria2c downloads at once in Direct Bulk → Parallel mode only. "
+        "Waiting files start as active ones finish.\n\nDoes not affect single downloads or sequential bulk downloads."),
+    "fragment_concurrency": ("Concurrent stream fragments",
+        "Controls how many HLS/DASH fragments yt-dlp downloads at once. Higher values may improve "
+        "speed, but some servers restrict them.\n\nApplies only to native HLS/DASH stream downloads, "
+        "such as browser-assisted streams. Does not affect normal aria2c-backed YouTube downloads."),
+    "speed_limit": ("Download speed limit",
+        "Limits total download speed for aria2c transfers and native yt-dlp HLS/DASH streams. "
+        "Unlimited removes AiDM's artificial cap.\n\nIn Direct Bulk → Parallel mode, the limit "
+        "applies to the whole aria2c process, not separately to each file."),
+    "retry_attempts": ("Retry attempts",
+        "Controls general retries after a failed download or connection attempt by the primary "
+        "transfer engine: aria2c, or yt-dlp for native HLS/DASH streams. Auto keeps the engine's "
+        "normal behavior.\n\nMore retries may help unstable connections but take longer to give up. "
+        "Separate from Stream fragment retries."),
+    "fragment_retries": ("Stream fragment retries",
+        "Controls retries for individual HLS/DASH fragments when yt-dlp downloads a stream "
+        "natively. Auto keeps yt-dlp's normal behavior.\n\nUseful on unstable connections; higher "
+        "values take longer to give up on unavailable fragments. Separate from general Retry attempts."),
+}
 
 
 class DimOverlay(QWidget):
@@ -117,6 +149,7 @@ class SettingsDrawer(QWidget):
         layout.setContentsMargins(20, 8, 20, 20)
         self.scroll_area.setWidget(self.content)
         panel_layout.addWidget(self.scroll_area)
+        self.info_buttons = {}
         self.profile_label = QLabel("Profile")
         self.profile_choice = QComboBox()
         self.profile_choice.setAccessibleName("Performance profile")
@@ -125,7 +158,7 @@ class SettingsDrawer(QWidget):
             self.profile_choice.addItem(profile.value, profile)
         custom_index = self.profile_choice.findData(PerformanceProfile.CUSTOM)
         self.profile_choice.model().item(custom_index).setEnabled(False)
-        layout.addWidget(self.profile_label)
+        self._add_help_label(layout, self.profile_label, "profile")
         layout.addWidget(self.profile_choice)
         self.setting_choices = {}
         for section, controls in SETTING_SECTIONS:
@@ -142,7 +175,7 @@ class SettingsDrawer(QWidget):
                 label.setBuddy(combo)
                 for text, value in choices:
                     combo.addItem(text, value)
-                layout.addWidget(label)
+                self._add_help_label(layout, label, name)
                 layout.addWidget(combo)
                 self.setting_choices[name] = combo
                 combo.currentIndexChanged.connect(lambda index, name=name: self._update_setting(name, index))
@@ -179,7 +212,26 @@ class SettingsDrawer(QWidget):
         self.button.setAccessibleName("Open settings")
         self.button.clicked.connect(lambda: self.set_open(not self.is_open))
         self.button.resize(self.button.sizeHint().expandedTo(self.button.minimumSizeHint()))
-        self.focus_order = (*self.combos, self.restore_button, self.button)
+        self.focus_order = tuple(widget for combo, info in zip(self.combos, self.info_buttons.values())
+                                 for widget in (combo, info)) + (self.restore_button, self.button)
+
+        # A child bubble stays inside the application and leaves keyboard focus
+        # on its trigger. It does not compete with native combo popup windows.
+        self.help_popup = QFrame(self)
+        self.help_popup.setFrameShape(QFrame.Shape.StyledPanel)
+        self.help_popup.setAutoFillBackground(True)
+        help_layout = QVBoxLayout(self.help_popup)
+        help_layout.setContentsMargins(12, 10, 12, 10)
+        self.help_title = QLabel()
+        self.help_title.setFont(font)
+        self.help_title.setWordWrap(True)
+        self.help_text = QLabel()
+        self.help_text.setWordWrap(True)
+        self.help_text.setTextFormat(Qt.TextFormat.PlainText)
+        help_layout.addWidget(self.help_title)
+        help_layout.addWidget(self.help_text)
+        self.help_popup.hide()
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self.help_popup.hide)
 
         self.animation = QPropertyAnimation(self, b"reveal", self)
         self.animation.setDuration(210)
@@ -193,6 +245,47 @@ class SettingsDrawer(QWidget):
         # Scope keyboard interception to this window, without disabling or
         # changing the focus policies of dynamically rendered main controls.
         parent.installEventFilter(self)
+
+    def _add_help_label(self, layout, label, name):
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        row.addWidget(label, 1)
+        info = QToolButton()
+        info.setText("ⓘ")
+        info.setAutoRaise(True)
+        info.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        title, text = SETTING_HELP[name]
+        info.setAccessibleName(f"About {title.lower()}")
+        info.setAccessibleDescription(text)
+        info.clicked.connect(lambda: self._show_help(name))
+        row.addWidget(info)
+        self.info_buttons[name] = info
+        layout.addLayout(row)
+
+    def _show_help(self, name):
+        if not self.is_open:
+            return
+        button = self.info_buttons[name]
+        button.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.scroll_area.ensureWidgetVisible(button, 0, 24)
+        for combo in self.combos:
+            combo.hidePopup()
+        title, text = SETTING_HELP[name]
+        self.help_title.setText(title)
+        self.help_text.setText(text)
+        self.help_popup.setAccessibleName(title)
+        self.help_popup.setAccessibleDescription(text)
+        width = min(340, self.width() - 16)
+        self.help_popup.setFixedSize(width, self.help_popup.layout().totalHeightForWidth(width))
+        self.help_popup.layout().activate()
+        anchor = button.mapTo(self, QPoint(0, button.height()))
+        x = max(8, min(anchor.x(), self.width() - self.help_popup.width() - 8))
+        y = anchor.y() + 4
+        if y + self.help_popup.height() > self.height() - 8:
+            y = max(8, anchor.y() - button.height() - self.help_popup.height() - 4)
+        self.help_popup.move(x, y)
+        self.help_popup.show()
+        self.help_popup.raise_()
 
     def refresh_from_settings(self):
         """Reflect derived values without applying a preset or writing settings."""
@@ -305,6 +398,7 @@ class SettingsDrawer(QWidget):
             self.button.raise_()
             self.profile_choice.setFocus(Qt.FocusReason.OtherFocusReason)
         else:
+            self.help_popup.hide()
             for combo in self.combos:
                 combo.hidePopup()
         self.animation.setStartValue(self._reveal)
@@ -320,6 +414,7 @@ class SettingsDrawer(QWidget):
     def hideEvent(self, event):
         # Also handles the containing window closing during an animation.
         self.animation.stop()
+        self.help_popup.hide()
         self._hide_saved()
         QApplication.instance().removeEventFilter(self)
         self.is_open = False
@@ -331,6 +426,9 @@ class SettingsDrawer(QWidget):
         super().hideEvent(event)
 
     def eventFilter(self, watched, event):
+        if (watched in (self.window(), self.parentWidget())
+                and event.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.WindowDeactivate)):
+            self.help_popup.hide()
         if watched is self.parentWidget() and event.type() == QEvent.Type.Resize:
             self.setGeometry(self.parentWidget().rect())
             # Qt defers resizeEvent for hidden widgets; position the visible
@@ -338,12 +436,16 @@ class SettingsDrawer(QWidget):
             self._position_widgets()
         if not self.blocks_input or not isinstance(watched, QWidget):
             return False
+        in_help = watched is self.help_popup or self.help_popup.isAncestorOf(watched)
+        if (self.help_popup.isVisible() and event.type() == QEvent.Type.MouseButtonPress
+                and not in_help):
+            self.help_popup.hide()
         # QWidget.isAncestorOf does not cross the combo's popup window boundary.
         popup_combo = next((combo for combo in self.combos
                             if watched.window() is combo.view().window()), None)
         in_popup = popup_combo is not None
         inside = (watched is self.button or watched is self.panel or self.panel.isAncestorOf(watched)
-                  or in_popup)
+                  or in_popup or in_help)
         if not inside and watched.window() is not self.window():
             return False
         if event.type() == QEvent.Type.ShortcutOverride:
@@ -352,7 +454,11 @@ class SettingsDrawer(QWidget):
             event.accept()  # Prevent window-wide Download shortcuts reaching the main UI.
             return True
         if event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Escape and self.help_popup.isVisible():
+                self.help_popup.hide()
+                return True
             if event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                self.help_popup.hide()
                 current = popup_combo or QApplication.focusWidget()
                 if popup_combo is not None:
                     popup_combo.hidePopup()
@@ -363,6 +469,9 @@ class SettingsDrawer(QWidget):
                 target.setFocus(Qt.FocusReason.BacktabFocusReason if backwards else Qt.FocusReason.TabFocusReason)
                 return True
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if watched in self.info_buttons.values():
+                    watched.click()
+                    return True
                 if watched is self.button:
                     self.set_open(not self.is_open)
                     return True
@@ -372,6 +481,7 @@ class SettingsDrawer(QWidget):
         if event.type() == QEvent.Type.FocusIn:
             if not inside:
                 self.profile_choice.setFocus(Qt.FocusReason.OtherFocusReason)
-            elif watched in self.combos or watched is self.restore_button:
+            elif watched in self.focus_order and watched is not self.button:
+                self.help_popup.hide()
                 self.scroll_area.ensureWidgetVisible(watched, 0, 24)
         return False
