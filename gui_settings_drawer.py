@@ -5,8 +5,8 @@ import sys
 from PySide6.QtCore import QEvent, QEasingCurve, QPoint, QPropertyAnimation, Property, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea,
-    QToolButton, QVBoxLayout, QWidget,
+    QAbstractButton, QApplication, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QScrollArea, QToolButton, QVBoxLayout, QWidget,
 )
 
 from download_settings import (
@@ -61,6 +61,11 @@ SETTING_SECTIONS = (
 
 
 SETTING_HELP = {
+    "proxy": ("Proxy Mode",
+        "Routes one supported download through an external SOCKS5 proxy. "
+        "AiDM does not start or manage the proxy.\n\nAdvanced features and ordinary download "
+        "controls are unavailable while active. Only the saved endpoint is used. "
+        "Changes apply to new jobs; Retry keeps the original job's endpoint."),
     "profile": ("Performance profile",
         "Quick presets for the three performance controls below. Custom appears when those "
         "settings do not match a preset.\n\nBandwidth and retry settings are not changed by profiles."),
@@ -118,9 +123,10 @@ class SettingsDrawer(QWidget):
 
     transition_finished = Signal(bool)
 
-    def __init__(self, parent, settings: DownloadSettings):
+    def __init__(self, parent, settings: DownloadSettings, proxy_settings=None):
         super().__init__(parent)
         self.settings = settings
+        self.proxy_settings = proxy_settings
         self.is_open = False
         self._reveal = 0.0
         self.overlay = DimOverlay(self)
@@ -184,6 +190,8 @@ class SettingsDrawer(QWidget):
         self.restore_button.setAccessibleName("Restore default download settings")
         self.restore_button.clicked.connect(self._restore_defaults)
         layout.addWidget(self.restore_button)
+        if proxy_settings is not None:
+            self._add_proxy_section(layout, font)
         layout.addStretch()
         # Reserve one quiet footer line so notifications do not move the form.
         self.saved_notice = QLabel("Settings saved")
@@ -214,6 +222,12 @@ class SettingsDrawer(QWidget):
         self.button.resize(self.button.sizeHint().expandedTo(self.button.minimumSizeHint()))
         self.focus_order = tuple(widget for combo, info in zip(self.combos, self.info_buttons.values())
                                  for widget in (combo, info)) + (self.restore_button, self.button)
+        if proxy_settings is not None:
+            self.focus_order = self.focus_order[:-1] + (
+                self.proxy_toggle, self.info_buttons["proxy"], self.proxy_host,
+                self.proxy_port, self.proxy_save, self.button,
+            )
+            self.refresh_proxy_state()
 
         # A child bubble stays inside the application and leaves keyboard focus
         # on its trigger. It does not compete with native combo popup windows.
@@ -245,6 +259,82 @@ class SettingsDrawer(QWidget):
         # Scope keyboard interception to this window, without disabling or
         # changing the focus policies of dynamically rendered main controls.
         parent.installEventFilter(self)
+
+    def _add_proxy_section(self, layout, font):
+        layout.addSpacing(8)
+        heading = QLabel("PROXY-AWARE SPECIAL MODE")
+        heading.setFont(font)
+        heading.setWordWrap(True)
+        layout.addWidget(heading)
+        self.proxy_toggle = QCheckBox("Proxy Mode")
+        self.proxy_toggle.setAccessibleName("Proxy Mode")
+        self._add_help_label(layout, self.proxy_toggle, "proxy")
+        self.proxy_toggle.toggled.connect(self._toggle_proxy)
+        endpoint = self.proxy_settings.endpoint
+        self.proxy_host = QLineEdit(endpoint.host if endpoint else "")
+        self.proxy_port = QLineEdit(str(endpoint.port) if endpoint else "")
+        for title, widget in (("SOCKS host", self.proxy_host), ("SOCKS port", self.proxy_port)):
+            label = QLabel(title)
+            label.setBuddy(widget)
+            widget.setAccessibleName(title)
+            layout.addWidget(label)
+            layout.addWidget(widget)
+        self.proxy_example = QLabel("(e.g. 127.0.0.1 : 1081)")
+        self.proxy_example.setStyleSheet("color: palette(placeholder-text);")
+        layout.addWidget(self.proxy_example)
+        self.proxy_save = QPushButton("Save")
+        self.proxy_save.setAccessibleName("Save SOCKS endpoint")
+        self.proxy_save.clicked.connect(self._save_proxy)
+        layout.addWidget(self.proxy_save)
+        notice = QLabel("Special mode supports one download at a time. Most advanced AiDM features "
+                        "are unavailable. Ordinary download controls are preserved for normal mode.")
+        notice.setWordWrap(True)
+        layout.addWidget(notice)
+        self.proxy_feedback = QLabel()
+        self.proxy_feedback.setWordWrap(True)
+        self.proxy_feedback.setAccessibleName("Proxy settings feedback")
+        self.proxy_feedback.hide()
+        layout.addWidget(self.proxy_feedback)
+
+    def refresh_proxy_state(self):
+        # Do not overwrite unsaved text when mode or another view changes.
+        enabled = self.proxy_settings.enabled
+        with QSignalBlocker(self.proxy_toggle):
+            self.proxy_toggle.setChecked(enabled)
+        for widget in (*self.combos, self.restore_button):
+            widget.setEnabled(not enabled)
+
+    def _toggle_proxy(self, enabled):
+        self._hide_saved()
+        try:
+            self.proxy_settings.set_enabled(enabled)
+            self.proxy_feedback.hide()
+        except ValueError as error:
+            self._show_proxy_error(error)
+        self.refresh_proxy_state()
+
+    def _save_proxy(self):
+        self._hide_saved()
+        try:
+            self.proxy_settings.save(self.proxy_host.text(), self.proxy_port.text())
+        except (ValueError, OSError) as error:
+            self._show_proxy_error(error)
+            return
+        endpoint = self.proxy_settings.endpoint
+        self.proxy_host.setText(endpoint.host)
+        self.proxy_port.setText(str(endpoint.port))
+        self.proxy_feedback.hide()
+        self._show_saved()
+
+    def _show_proxy_error(self, error):
+        self.proxy_feedback.setText(str(error))
+        self.proxy_feedback.show()
+        # Let the new label update the scroll range before revealing feedback.
+        QTimer.singleShot(0, self, lambda:
+                          self.scroll_area.ensureWidgetVisible(self.proxy_feedback, 0, 24))
+
+    def _available_focus_order(self):
+        return tuple(widget for widget in self.focus_order if widget.isEnabled() and widget.isVisible())
 
     def _add_help_label(self, layout, label, name):
         row = QHBoxLayout()
@@ -396,7 +486,7 @@ class SettingsDrawer(QWidget):
             self.panel.show()
             self.raise_()
             self.button.raise_()
-            self.profile_choice.setFocus(Qt.FocusReason.OtherFocusReason)
+            self._available_focus_order()[0].setFocus(Qt.FocusReason.OtherFocusReason)
         else:
             self.help_popup.hide()
             for combo in self.combos:
@@ -464,23 +554,21 @@ class SettingsDrawer(QWidget):
                     popup_combo.hidePopup()
                 backwards = (event.key() == Qt.Key.Key_Backtab
                              or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
-                index = self.focus_order.index(current) if current in self.focus_order else 0
-                target = self.focus_order[(index + (-1 if backwards else 1)) % len(self.focus_order)]
+                order = self._available_focus_order()
+                index = order.index(current) if current in order else 0
+                target = order[(index + (-1 if backwards else 1)) % len(order)]
                 target.setFocus(Qt.FocusReason.BacktabFocusReason if backwards else Qt.FocusReason.TabFocusReason)
                 return True
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                if watched in self.info_buttons.values():
+                if inside and isinstance(watched, QAbstractButton):
                     watched.click()
-                    return True
-                if watched is self.button:
-                    self.set_open(not self.is_open)
                     return True
                 return not inside or watched is self.panel
             if not inside:
                 return True
         if event.type() == QEvent.Type.FocusIn:
             if not inside:
-                self.profile_choice.setFocus(Qt.FocusReason.OtherFocusReason)
+                self._available_focus_order()[0].setFocus(Qt.FocusReason.OtherFocusReason)
             elif watched in self.focus_order and watched is not self.button:
                 self.help_popup.hide()
                 self.scroll_area.ensureWidgetVisible(watched, 0, 24)

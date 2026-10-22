@@ -10,8 +10,10 @@ import argparse
 from dataclasses import dataclass
 from enum import Enum, auto
 from urllib.parse import urlparse
+from pathlib import PurePosixPath
 
 from detector import (
+    DIRECT_EXTENSIONS,
     is_torrent_file_path,
     is_youtube_playlist_url,
     is_youtube_url,
@@ -42,6 +44,12 @@ class MetadataStatus(Enum):
     PENDING = auto()
     AVAILABLE = auto()
     UNAVAILABLE = auto()
+
+
+PROXY_UNSUPPORTED = (
+    "Proxy Mode supports one compatible download at a time. "
+    "Turn it off to use this AiDM feature."
+)
 
 
 @dataclass
@@ -86,6 +94,36 @@ def has_stream_inspector_args(args: argparse.Namespace) -> bool:
         or bool(args.subtitle)
         or args.title is not None
     )
+
+
+def classify_proxy_input(args: argparse.Namespace) -> InspectionResult:
+    """Local-only special-mode classification; never probe a URL directly.
+
+    Unknown pages are left to proxied yt-dlp extraction. Browser subtitle URLs
+    remain context only; special-mode execution never launches a sidecar.
+    """
+    urls = list(args.urls)
+    rejected = InspectionResult(InputKind.UNSUPPORTED, urls, error=PROXY_UNSUPPORTED)
+    if len(urls) != 1:
+        return rejected
+    try:
+        parsed = urlparse(urls[0])
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return rejected
+        suffix = PurePosixPath(parsed.path).suffix.lower()
+        if is_youtube_playlist_url(urls[0]) or suffix in {".torrent", ".vtt", ".srt", ".ass", ".ssa"}:
+            return rejected
+    except ValueError:
+        return rejected
+    # Single website URLs use the simple yt-dlp workflow, without normal-mode
+    # quality/metadata discovery. No additional network worker is needed.
+    kind = {".m3u8": InputKind.HLS, ".mpd": InputKind.DASH}.get(suffix)
+    if kind is None:
+        kind = InputKind.DIRECT_SINGLE if suffix in DIRECT_EXTENSIONS else InputKind.GENERIC_YTDLP
+    assisted = has_stream_inspector_args(args)
+    stream = build_stream_input_from_args(args, urls[0]) if assisted else None
+    return InspectionResult(InputKind.STREAM_INSPECTOR if assisted else kind, urls,
+                            stream=stream, route_kind=kind if assisted else None)
 
 
 def classify_input(args: argparse.Namespace) -> InspectionResult:

@@ -16,6 +16,7 @@ from aria2_parallel_progress import Aria2ParallelProgressParser, Aria2Snapshot
 from downloader import (
     build_direct_command, build_direct_bulk_parallel_command, build_stream_command,
     build_ytdlp_media_command, build_subtitle_command, select_subtitle_sidecar,
+    build_proxy_media_command,
 )
 from inspection import InputKind
 from stream_parser import StreamInput
@@ -416,13 +417,18 @@ class GenericDownloadProcess(DownloadProcess):
     owns_process_group = True
 
     def __init__(self, job: DownloadJob, parent=None):
-        if job.kind != InputKind.GENERIC_YTDLP:
+        if job.kind != InputKind.GENERIC_YTDLP and job.proxy is None:
             raise ValueError("Generic execution requires GENERIC_YTDLP")
         super().__init__(job, parent)
         self._progress_parser = YtDlpProgressParser()
         self._last_status = None
 
     def build_command(self):
+        if self.job.proxy is not None:
+            return build_proxy_media_command(
+                self.job.urls[0], self.job.proxy, self.job.title, self.job.headers,
+                destination=self.job.destination, telemetry=True,
+            )
         return build_ytdlp_media_command(
             self.job.urls[0], self.job.title,
             destination=self.job.destination, telemetry=True,
@@ -622,6 +628,9 @@ class YouTubeDownloadProcess(DownloadProcess):
 
 def create_download_process(job: DownloadJob, parent=None) -> DownloadProcess:
     """Only implemented adapters belong here; unsupported routes stay deferred."""
+    if job.proxy is not None:
+        # Reuse the single yt-dlp lifecycle, never the multi-stage sidecar adapter.
+        return GenericDownloadProcess(job, parent)
     if job.kind == InputKind.STREAM_INSPECTOR:
         return StreamInspectorDownloadProcess(job, parent)
     if job.kind == InputKind.DIRECT_SINGLE:

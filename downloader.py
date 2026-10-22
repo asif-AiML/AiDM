@@ -8,12 +8,44 @@ from workflow_warning import WorkflowWarning
 from ytdlp_progress import ytdlp_telemetry_options
 from download_settings import SettingsValues
 from download_options import aria2_settings_options, native_stream_settings_options
+from proxy_settings import ProxyEndpoint
 
 ARIA2_DOWNLOADER_ARGUMENTS = "aria2c:-x 8 -s 8 -k 1M"
 ARIA2_GUI_TELEMETRY_ARGUMENTS = (
     " --show-console-readout=true --enable-color=false"
     " --truncate-console-readout=false --human-readable=false --summary-interval=1"
 )
+
+
+def build_proxy_media_command(
+    url: str, proxy: ProxyEndpoint, title: str | None = None,
+    headers: dict[str, str] | None = None, *, destination: str | None = None,
+    telemetry: bool = False,
+) -> list[str]:
+    """Isolated single-target SOCKS path; normal builders and CLI stay unchanged."""
+    if not isinstance(proxy, ProxyEndpoint):
+        raise ValueError("A validated SOCKS endpoint is required")
+    # Restrict formats to yt-dlp HTTP/native stream protocols. FFmpeg can be
+    # selected internally for unsupported/live HLS and does not support SOCKS:
+    # deny its network input protocols rather than allowing a direct fallback.
+    protocol = '[protocol~="^(https?|m3u8_native|m3u8|http_dash_segments)$"]'
+    command = [
+        "yt-dlp", "--ignore-config", "--no-plugin-dirs",
+        "--proxy", proxy.url, "--no-playlist", "--playlist-items", "1",
+        "--break-match-filters", "!playlist",
+        "--downloader", "native",
+        "--downloader-args", "ffmpeg_i:-protocol_whitelist file,pipe,crypto,data",
+        "-f", f"bv*{protocol}+ba{protocol}/b{protocol}",
+    ]
+    if title:
+        command.extend(["-o", f"{sanitize_filename(title)}.%(ext)s"])
+    for name, value in (headers or {}).items():
+        command.extend(["--add-header", f"{name}:{value}"])
+    if destination is not None:
+        command.extend(["-P", destination])
+    if telemetry:
+        command.extend(ytdlp_telemetry_options())
+    return command + ["--", url]
 
 
 def build_aria2_downloader_arguments(settings: SettingsValues | None = None, *, telemetry=False):
