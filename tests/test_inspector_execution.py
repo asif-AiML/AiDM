@@ -238,7 +238,7 @@ class InspectorGuiTests(unittest.TestCase):
             self.assertEqual(self.window.current_state, GuiState.COMPLETE)
             self.assertIsNone(self.window._workflow_warning)
             self.assertEqual(len(worker.process.calls), 1)
-        for kind in (InputKind.HLS, InputKind.DASH, InputKind.GENERIC_YTDLP, InputKind.TORRENT):
+        for kind in (InputKind.HLS, InputKind.DASH, InputKind.TORRENT):
             with self.assertRaises(UnsupportedExecution):
                 create_download_process(DownloadJob(kind, (URL,), str(self.directory)))
 

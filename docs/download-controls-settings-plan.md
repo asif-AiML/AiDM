@@ -1,8 +1,22 @@
 # AiDM Advanced Download Controls — Design Notes
 
 > **Status:** Draft / discussion document  
-> **Branch:** `feat/gui`  
+> **Branch:** `feat/controls-settings`  
 > **Purpose:** Define safe, GUI-friendly control over selected yt-dlp and aria2c behavior before implementation.
+
+**Implementation / validation note (M8):** The locked controls are implemented through M6.5.
+The design discussion below is retained as the original contract. Settings are GUI-facing;
+CLI callers that omit a settings snapshot retain legacy behavior. QSettings stores the six
+control values; the profile is derived from the three performance values, not stored as an
+independent source of truth. New jobs capture immutable snapshots; Retry keeps the original
+job's snapshot.
+
+The user reports manual verification of drawer behavior, profile switching, individual-control
+synchronization, exact profile detection, persistence across restarts, and general GUI behavior.
+Live direct, direct bulk parallel, YouTube, browser-assisted HLS/DASH, and generic yt-dlp
+fallback download checks remain deferred because internet data is limited. Offline command
+and lifecycle tests verify wiring in the meantime; deferred network checks do not block
+implementation completion.
 
 ---
 
@@ -41,57 +55,177 @@ The GUI should not become a visual copy of the yt-dlp or aria2c manuals.
 
 ---
 
-## 2. Settings location
+## 2. Settings UI — LOCKED DESIGN
 
-These controls should **not** clutter the main download screen.
+The settings UI should remain simple, minimal and visually secondary to the main downloader.
 
-Add a small gear/settings icon near the top of the application.
+AiDM will use a **right-side settings drawer** rather than replacing or suppressing the main download surface.
+
+### Entry control
+
+Place a compact three-horizontal-bars control in the top-right area of the main AiDM box:
+
+```text
+AiDM                                      ☰
+```
+
+The hamburger/sidebar symbol is preferred over a three-dots menu because the action opens a panel rather than a generic list of actions.
+
+### Opening behavior
+
+When the user activates the control:
+
+1. a settings drawer slides in from the right;
+2. the main AiDM surface remains visible;
+3. the main surface receives a translucent dim overlay;
+4. the main surface becomes temporarily non-interactive while the drawer has focus.
+
+Use a dim overlay rather than a real-time blur effect.
+
+Reason:
+
+- it provides the same visual focus shift;
+- it is simpler and more reliable in PySide6;
+- it avoids inconsistent or expensive blur behavior across Linux desktop environments.
 
 Conceptually:
 
 ```text
-AiDM                                      ⚙
+┌──────────────────────────────────────────────┐
+│ dimmed AiDM surface     │ Download Settings │
+│                         │                   │
+│                         │ Profile           │
+│                         │ [ Balanced ▼ ]   │
+│                         │                   │
+│                         │ PERFORMANCE       │
+│                         │ Connections/file │
+│                         │ [ 4 ▼ ]       ⓘ │
+│                         │                   │
+│                         │ Parallel files   │
+│                         │ [ 4 ▼ ]       ⓘ │
+│                         │                   │
+│                         │ Stream fragments │
+│                         │ [ 4 ▼ ]       ⓘ │
+│                         │                   │
+│                         │ BANDWIDTH         │
+│                         │ Speed limit      │
+│                         │ [ Unlimited ▼ ]ⓘ│
+│                         │                   │
+│                         │ RELIABILITY       │
+│                         │ Retry attempts   │
+│                         │ [ Auto ▼ ]    ⓘ │
+│                         │ Fragment retries │
+│                         │ [ Auto ▼ ]    ⓘ │
+│                         │                   │
+│                         │ [Restore Defaults]│
+└──────────────────────────────────────────────┘
 ```
 
-Opening it reveals a dedicated settings surface with room for future options.
+### Control order
 
-A possible structure:
+The drawer should present controls in this order:
 
 ```text
-Download profile
-[ Balanced ▼ ]                     ⓘ
+Performance profile
 
 PERFORMANCE
-
 Connections per file
-[ 4 ▼ ]                            ⓘ
-
 Parallel files
-[ 4 ▼ ]                            ⓘ
-
-Stream fragments
-[ 4 ▼ ]                            ⓘ
-
+Concurrent stream fragments
 
 BANDWIDTH
-
-Speed limit
-[ Unlimited ▼ ]                    ⓘ
-
+Download speed limit
 
 RELIABILITY
-
 Retry attempts
-[ 10 ▼ ]                           ⓘ
-
 Stream fragment retries
-[ 10 ▼ ]                           ⓘ
 
-
-[ Restore Defaults ]
+Restore Defaults
 ```
 
-This is only a design direction. Exact layout and controls are not yet locked.
+Profiles sit at the top because they provide the quickest high-level performance choice.
+
+### No Save button
+
+There is intentionally **no Save button**.
+
+Every setting change is persisted immediately through `QSettings`.
+
+Conceptually:
+
+```text
+user changes setting
+→ update in-memory settings state
+→ persist to QSettings immediately
+→ show lightweight confirmation
+```
+
+This avoids hidden unsaved state and ensures changes are not lost if the application closes unexpectedly after editing settings.
+
+### Saved notification
+
+After a setting change is persisted, AiDM should show a small non-blocking in-app confirmation such as:
+
+```text
+Settings saved
+```
+
+or:
+
+```text
+Settings saved successfully
+```
+
+This should behave like a lightweight toast/status notification.
+
+It must **not** be a modal dialog requiring an OK click.
+
+Repeated rapid changes may reuse/refresh the same notification rather than stacking multiple popups.
+
+### Closing behavior
+
+The drawer closes when the user:
+
+```text
+clicks ☰ again
+OR
+clicks the dimmed main AiDM area
+```
+
+Closing reverses the animation and restores the normal main UI interaction state.
+
+Closing the drawer does not perform a separate save operation because values are already persisted.
+
+### Animation
+
+Keep animation restrained and functional:
+
+```text
+open  → drawer slides in from the right
+close → drawer slides back to the right
+duration ≈ 180–250 ms
+```
+
+The dim overlay may fade in/out alongside the drawer.
+
+Do not add bouncing, scaling or decorative animation.
+
+### Active-download rule
+
+Opening Settings during an active download must not alter the command of the process already running.
+
+Any changed setting applies to the **next download job**.
+
+Conceptually:
+
+```text
+download A already running
+→ user changes Fast → Balanced
+→ download A continues unchanged
+→ download B uses Balanced settings
+```
+
+This keeps process behavior deterministic and avoids trying to mutate active aria2c or yt-dlp command lines.
 
 ---
 
@@ -184,54 +318,293 @@ The GUI should never imply that a higher number is always better.
 
 ---
 
-## 5. Preset/profile idea
+## 5. Performance profiles — LOCKED DESIGN
 
-A higher-level download profile may sit above individual controls.
+Profiles are **preset bundles of already-defined controls**.
 
-Possible concept:
+They do not introduce new backend behavior.
+
+Profiles apply only to the three performance/concurrency controls:
+
+```text
+Connections per file
+Parallel files
+Concurrent stream fragments
+```
+
+The following settings remain independent and are **not changed by a performance profile**:
+
+```text
+Download speed limit
+Retry attempts
+Stream fragment retries
+```
+
+This prevents a user from accidentally losing a bandwidth cap or reliability preference simply because they switched performance profile.
+
+### Locked profiles
+
+```text
+AiDM Default
+Conservative
+Balanced
+Fast
+Custom
+```
+
+### AiDM Default
+
+`AiDM Default` is the special initial/reset profile.
+
+It exists because `Connections per file = Auto` preserves route-specific proven AiDM behavior and therefore does not fit cleanly inside the fixed numeric Conservative / Balanced / Fast presets.
+
+Locked values:
+
+```text
+Connections per file        = Auto
+Parallel files              = 4
+Concurrent stream fragments = 4
+```
+
+Intent:
+
+- preserve existing AiDM route-specific connection behavior where already proven;
+- use the recommended first-version concurrency values for the other performance controls;
+- provide a clear, truthful default state rather than pretending Auto / 4 / 4 is Balanced.
+
+For Connections per file, Auto means:
+
+```text
+Direct single
+Direct bulk sequential
+Direct bulk parallel
+→ 1 connection/file
+
+Normal YouTube transfers delegated to aria2c
+→ 8 connections/file
+```
+
+This profile is the default on a brand-new installation and the target restored by Restore Defaults.
+
+#### Conservative
+
+```text
+Connections per file        = 1
+Parallel files              = 2
+Concurrent stream fragments = 1
+```
+
+Intent:
+
+- lowest concurrency;
+- maximum compatibility;
+- least aggressive network/server behavior.
+
+#### Balanced
+
+```text
+Connections per file        = 4
+Parallel files              = 4
+Concurrent stream fragments = 4
+```
+
+Intent:
+
+- moderate concurrency;
+- strong general-purpose performance;
+- safe middle ground.
+
+#### Fast
+
+```text
+Connections per file        = 8
+Parallel files              = 4
+Concurrent stream fragments = 8
+```
+
+Intent:
+
+- strongest performance-oriented preset exposed by AiDM;
+- keeps Parallel files capped at 4;
+- respects the first-version accepted aria2 ceiling:
+
+```text
+4 parallel files × 8 connections per file
+≈ up to 32 simultaneous aria2 connections
+```
+
+This profile does not imply guaranteed maximum speed on every server.
+
+#### Custom
+
+Custom is the dynamic state used when the three performance controls do not exactly match one of the named presets.
+
+Example:
+
+```text
+Balanced selected
+→ 4 / 4 / 4
+
+user changes Connections per file to 8
+→ 8 / 4 / 4
+
+this does not match a named preset
+→ profile becomes Custom
+```
+
+### Exact profile matching
+
+The profile indicator should be derived from the current three performance values.
+
+If they exactly match a named profile, the UI should show that profile rather than unnecessarily remaining on Custom.
+
+Examples:
+
+```text
+Auto / 4 / 4
+→ AiDM Default
+
+1 / 2 / 1
+→ Conservative
+
+4 / 4 / 4
+→ Balanced
+
+8 / 4 / 8
+→ Fast
+
+anything else
+→ Custom
+```
+
+This means a user can manually return to a known preset combination and AiDM will recognize it automatically.
+
+### Auto and profiles
+
+The individual Connections per file control includes:
+
+```text
+Auto — Recommended
+```
+
+Auto remains a valid individual setting and is intentionally part of the special AiDM Default profile.
+
+Reason:
+
+```text
+Auto
+→ preserve AiDM's route-specific proven defaults
+
+AiDM Default
+→ preserve that Auto behavior while using recommended values
+   for the other performance controls
+
+Conservative / Balanced / Fast
+→ deliberately apply explicit numeric performance presets
+```
+
+### Profile interaction rule
+
+Selecting a named profile should immediately set the three performance controls to that profile's locked values.
+
+Changing any one of those three controls manually should trigger profile re-evaluation:
+
+```text
+exact named combination
+→ show matching named profile
+
+otherwise
+→ Custom
+```
+
+Changing:
+
+```text
+Download speed limit
+Retry attempts
+Stream fragment retries
+```
+
+must **not** change the performance profile because those controls are outside the profile bundle.
+
+### Persistence
+
+The selected/derived profile and underlying control values should persist through QSettings.
+
+Conceptually:
+
+```text
+performance_profile
+connections_per_file
+parallel_files
+fragment_concurrency
+```
+
+The persisted values must remain internally consistent.
+
+The underlying control values are the source of truth; the profile label can be re-derived from them on startup.
+
+### First-version profile table
+
+| Profile | Connections per file | Parallel files | Concurrent stream fragments |
+|---|---:|---:|---:|
+| AiDM Default | Auto | 4 | 4 |
+| Conservative | 1 | 2 | 1 |
+| Balanced | 4 | 4 | 4 |
+| Fast | 8 | 4 | 8 |
+| Custom | user-selected | user-selected | user-selected |
+
+### Restore Defaults baseline
+
+Restore Defaults should restore the complete first-version settings state to:
+
+```text
+Profile                     = AiDM Default
+
+Connections per file        = Auto
+Parallel files              = 4
+Concurrent stream fragments = 4
+
+Download speed limit        = Unlimited
+Retry attempts              = Auto
+Stream fragment retries     = Auto
+```
+
+This gives Restore Defaults a precise and stable meaning.
+
+### Information text
+
+The first-version profile `ⓘ` explanation should communicate:
 
 ```text
 Download profile
 
-● Balanced
-○ Conservative
-○ Fast
-○ Custom
+Quickly applies a preset to AiDM's performance controls.
+
+AiDM Default preserves AiDM's proven route-specific behavior
+while using the recommended values for the other performance
+controls.
+
+Conservative uses the lowest concurrency for maximum
+compatibility.
+
+Balanced uses moderate concurrency for general use.
+
+Fast uses AiDM's strongest first-version performance settings.
+
+Custom appears when the current performance controls do not
+match a named preset.
+
+Profiles do not change your speed limit or retry settings.
 ```
 
-Possible meanings:
-
-### Conservative
-
-- fewer simultaneous connections;
-- low fragment concurrency;
-- lower parallelism;
-- maximum compatibility/reliability.
-
-### Balanced
-
-- moderate parallelism;
-- safe general-purpose defaults;
-- intended default profile.
-
-### Fast
-
-- higher but still tested concurrency;
-- intended for users who want stronger performance and have a stable connection/server.
-
-### Custom
-
-- user directly controls the individual values.
-
-The exact numeric values are **not locked yet**.
-
-They should be based on testing rather than assuming that higher values automatically mean higher speed.
+The wording may be polished during final GUI implementation, but the meaning above is locked.
 
 ---
 
 ## 6. Important aria2c controls
 
-### 6.1 Connections per file
+### 6.1 Connections per file — LOCKED DESIGN
 
 Relevant aria2c options:
 
@@ -240,34 +613,235 @@ Relevant aria2c options:
 --max-connection-per-server
 ```
 
-These options are closely related.
+These two options are treated as **one user-facing control**.
 
-Exposing them separately to a non-technical user would create confusion, so AiDM should likely expose one friendly setting:
+The GUI must not expose them as two independent settings.
+
+Friendly control:
 
 ```text
 Connections per file
 ```
 
-AiDM can translate the selected value into an appropriate combination of:
+When the user selects a numeric value `N`, AiDM should apply the corresponding aria2c connection policy together:
 
 ```text
 --split=N
 --max-connection-per-server=N
 ```
 
-Expected effect:
+This prevents confusing combinations such as:
 
-- `1`: one connection, most conservative;
-- higher values: multiple pieces of the same file can download simultaneously;
-- may improve large-file throughput;
-- may provide no benefit on already-fast or connection-limited servers;
-- very high values may cause server throttling or connection rejection.
+```text
+--split=8
+--max-connection-per-server=1
+```
 
-This is a strong candidate for the first version.
+where the GUI claims a high connection setting but aria2c is still limited to one connection per server.
+
+#### Locked choices
+
+The first version should expose:
+
+```text
+Auto — Recommended
+1 — Maximum compatibility
+4 — Balanced
+8 — Best performance
+```
+
+Do not expose `16` in the first version.
+
+The goal is to provide useful control without encouraging excessively aggressive connection counts.
+
+#### Auto — Recommended
+
+`Auto` does **not** mean random or adaptive benchmarking.
+
+It means:
+
+```text
+preserve AiDM's proven route-specific connection defaults
+```
+
+Current proven behavior:
+
+```text
+Direct single
+Direct bulk sequential
+Direct bulk parallel
+    → 1 connection per file
+
+Normal YouTube transfers delegated to aria2c
+    → 8 connections per file
+```
+
+This is the default and recommended choice because enabling the new Settings feature must not silently change already-tested download behavior for users who never touch the setting.
+
+#### 1 — Maximum compatibility
+
+Meaning:
+
+```text
+one file
+→ one connection
+```
+
+Expected behavior:
+
+- least aggressive;
+- generally safest with restrictive servers;
+- useful when higher connection counts cause failures or throttling;
+- may be slower when a server limits throughput per connection.
+
+#### 4 — Balanced
+
+Meaning:
+
+```text
+one file
+→ up to four simultaneous pieces/connections
+```
+
+Expected behavior:
+
+- moderate segmented downloading;
+- useful manual choice for users who want additional speed without using the strongest exposed setting;
+- may improve throughput on large files;
+- still depends on server and network behavior.
+
+#### 8 — Best performance
+
+Meaning:
+
+```text
+one file
+→ up to eight simultaneous pieces/connections
+```
+
+Expected behavior:
+
+- strongest performance-oriented value exposed by AiDM in the first version;
+- can improve throughput when a server benefits from parallel connections;
+- is **not** a promise that every download will be faster;
+- some servers may restrict, throttle or reject multiple simultaneous connections.
+
+The label `Best performance` means:
+
+> the strongest generally useful performance-oriented setting intentionally exposed by AiDM,
+
+not:
+
+> universally guaranteed fastest value for every server.
+
+#### Why 16 is intentionally omitted
+
+Higher values can create diminishing returns and much larger total connection counts when combined with parallel bulk downloading.
+
+Example:
+
+```text
+6 parallel files × 16 connections per file
+≈ up to 96 simultaneous connections
+```
+
+That is unnecessarily aggressive for a beginner-facing first version.
+
+The safe first-version ceiling is therefore:
+
+```text
+8 connections per file
+```
+
+#### Internal minimum split size
+
+Current AiDM uses:
+
+```text
+--min-split-size=1M
+```
+
+This should remain an internal implementation detail for now.
+
+Do not expose it as a separate GUI control in the first version.
+
+#### Applicability
+
+This control applies only when **aria2c is actually transferring the bytes**.
+
+Applies to:
+
+```text
+Direct single                         yes
+Direct bulk sequential                yes
+Direct bulk parallel                  yes
+Normal YouTube transfer via aria2c    yes
+Other aria2c-backed media transfers   yes
+```
+
+Does not apply to:
+
+```text
+yt-dlp-native browser-assisted HLS/DASH fragment transfer
+```
+
+The fact that yt-dlp participates in a route does not automatically make yt-dlp the transfer engine.
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Connections per file
+
+Controls how many parts of one file aria2c can download at the
+same time. More connections can improve speed when a server
+limits each connection, but some servers restrict multiple
+connections.
+
+Auto — Recommended keeps AiDM's tested setting for each
+download type. 1 offers maximum compatibility, 4 is balanced,
+and 8 is the performance-oriented choice.
+
+This setting applies only when aria2c performs the download.
+It does not affect native HLS/DASH streams downloaded by
+yt-dlp.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+A long benchmark session is **not required** for this control.
+
+Because `8` is already used successfully in AiDM's established aria2-backed YouTube path, the main new validation needed later is a short direct-download sanity test.
+
+Suggested implementation-phase check:
+
+```text
+same stable large direct URL
+
+1 connection  → run briefly
+4 connections → run briefly
+8 connections → run briefly
+```
+
+About 30–45 seconds per run is sufficient.
+
+The goal is not to prove universal speed rankings.
+
+The goal is only to verify:
+
+- segmented downloading works;
+- each value is actually passed to aria2c;
+- no obvious failure appears;
+- higher settings remain operational and sane.
+
+Full-file completion is not required solely for validating this setting.
 
 ---
 
-### 6.2 Parallel files
+### 6.2 Parallel files — LOCKED DESIGN
 
 Relevant aria2c option:
 
@@ -275,101 +849,508 @@ Relevant aria2c option:
 --max-concurrent-downloads
 ```
 
-This controls the number of separate files aria2c downloads at the same time.
-
-It is particularly relevant to:
+This control applies only to:
 
 ```text
 Direct bulk → Parallel
 ```
 
-Friendly setting:
+Friendly control:
 
 ```text
 Parallel files
 ```
 
+#### Locked choices
+
+The first version should expose:
+
+```text
+2 — Conservative
+4 — Recommended
+```
+
+The default/recommended value is:
+
+```text
+4
+```
+
+No higher values are needed in the first version.
+
+The goal is a simple queue model rather than exposing every possible aria2 concurrency value.
+
+#### Queue behavior
+
 Example:
 
 ```text
-20 files total
-4 parallel files
-
-→ 4 active
-→ remaining files wait
+10 files total
+4 active
+2 complete
+4 waiting
 ```
 
-This is different from connections per file.
-
-Both values interact.
-
-For example:
+Displayed compactly in the GUI as:
 
 ```text
-4 parallel files × 8 connections per file
-≈ up to 32 simultaneous connections
+10 files • 4 active • 2 complete • 4 waiting
 ```
 
-AiDM must avoid unsafe combinations and should warn or constrain settings when necessary.
+When one active file completes:
+
+```text
+one waiting file starts
+→ active count returns to 4
+```
+
+until the queue is exhausted.
+
+#### Backend mapping
+
+If the user selects:
+
+```text
+Parallel files = 4
+```
+
+AiDM should apply:
+
+```text
+--max-concurrent-downloads=4
+```
+
+If the user selects:
+
+```text
+Parallel files = 2
+```
+
+AiDM should apply:
+
+```text
+--max-concurrent-downloads=2
+```
+
+#### Interaction with Connections per file
+
+These two controls operate at different levels and are not contradictory:
+
+```text
+Parallel files
+→ number of separate files active at once
+
+Connections per file
+→ number of connections one active file may use
+```
+
+Example:
+
+```text
+Parallel files = 4
+Connections per file = 4
+
+→ 4 active files
+→ up to 4 connections per file
+→ up to about 16 simultaneous connections
+```
+
+With the first-version maximum Connections per file value:
+
+```text
+Parallel files = 4
+Connections per file = 8
+
+→ up to about 32 simultaneous connections
+```
+
+This is the accepted first-version ceiling.
+
+No extra warning system or dynamic conflict resolution is required beyond keeping Parallel files capped at 4 and Connections per file capped at 8.
+
+#### Applicability
+
+Applies to:
+
+```text
+Direct bulk → Parallel    yes
+```
+
+Does not apply to:
+
+```text
+Direct single             no
+Direct bulk → Sequential  no
+YouTube single            no
+YouTube bulk              no
+YouTube playlist          no
+HLS/DASH                  no
+```
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Parallel files
+
+Controls how many files download at the same time in Direct Bulk
+→ Parallel mode.
+
+With 4 selected, up to 4 files download while the rest wait.
+When one finishes, the next waiting file starts.
+
+This works together with Connections per file. For example,
+4 parallel files with 4 connections each can use up to about
+16 connections.
+
+This setting affects only Direct Bulk → Parallel downloads.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+No long performance benchmark is required.
+
+A short behavior test with several small direct URLs is enough.
+
+Suggested implementation-phase checks:
+
+```text
+Parallel files = 2
+→ verify 2 active and the remainder waiting
+
+Parallel files = 4
+→ verify 4 active and the remainder waiting
+```
+
+Also verify that when one active file completes, the next waiting file starts automatically.
+
+The purpose is to validate queue behavior and command wiring, not to benchmark total throughput.
 
 ---
 
-### 6.3 Global bandwidth limit
+### 6.3 Download speed limit — LOCKED DESIGN
 
-Relevant aria2c option:
+Primary aria2c option:
 
 ```text
 --max-overall-download-limit
 ```
 
-Friendly setting:
+Friendly control:
 
 ```text
 Download speed limit
 ```
 
-Possible choices:
+aria2c is the primary target for this setting because it performs the actual transfer for most current AiDM download paths, including direct downloads and normal YouTube transfers delegated by yt-dlp.
+
+#### Locked choices
+
+The first version should expose:
 
 ```text
-Unlimited
+Unlimited — Recommended
 1 MB/s
 2 MB/s
 5 MB/s
 10 MB/s
-Custom...
 ```
 
-This is user control rather than a speed enhancement.
+There is intentionally **no Custom option**.
 
-It is useful when the user wants to leave bandwidth available for browsing, calls, gaming, or other devices.
+The user does not need arbitrary bandwidth values, and removing Custom avoids confusing or unrealistic entries such as extremely high manual limits.
 
-For parallel jobs, an overall limit is easier to understand than a separate limit per file.
+#### Unlimited — Recommended
+
+Meaning:
+
+```text
+no artificial AiDM bandwidth cap
+```
+
+AiDM allows the active transfer engine to use as much bandwidth as the server, network and connection conditions permit.
+
+This is the recommended/default choice.
+
+#### Limited values
+
+```text
+1 MB/s
+2 MB/s
+5 MB/s
+10 MB/s
+```
+
+These values intentionally trade maximum download speed for available bandwidth.
+
+They are useful when the user wants to leave bandwidth available for:
+
+- browsing;
+- calls;
+- gaming;
+- other devices;
+- other network activity.
+
+#### aria2c mapping
+
+For aria2c-backed downloads:
+
+```text
+Unlimited
+→ do not apply an artificial overall speed limit
+
+1 MB/s
+→ --max-overall-download-limit=1M
+
+2 MB/s
+→ --max-overall-download-limit=2M
+
+5 MB/s
+→ --max-overall-download-limit=5M
+
+10 MB/s
+→ --max-overall-download-limit=10M
+```
+
+This is especially useful for Direct Bulk → Parallel because the limit applies to the aria2c process as a whole rather than separately multiplying a per-file cap across every active item.
+
+#### yt-dlp native mapping
+
+For browser-assisted HLS/DASH where yt-dlp's native downloader actually transfers the media:
+
+```text
+Unlimited
+→ no artificial yt-dlp rate limit
+
+1 MB/s
+→ --limit-rate 1M
+
+2 MB/s
+→ --limit-rate 2M
+
+5 MB/s
+→ --limit-rate 5M
+
+10 MB/s
+→ --limit-rate 10M
+```
+
+This keeps one user-facing AiDM control while applying the correct engine-specific flag.
+
+#### Applicability
+
+Primary current applicability:
+
+```text
+Direct single                         yes, via aria2c
+Direct bulk sequential                yes, via aria2c
+Direct bulk parallel                  yes, via aria2c
+Normal YouTube transfer via aria2c    yes, via aria2c
+Other aria2c-backed media transfers   yes
+Browser-assisted HLS/DASH             yes, via yt-dlp native
+```
+
+The practical emphasis remains aria2c because it handles the large majority of actual transfer work in current AiDM routes.
+
+yt-dlp-native rate limiting mainly matters for browser-assisted HLS/DASH streams.
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Download speed limit
+
+Limits how much download bandwidth AiDM may use. Lower values
+leave more bandwidth available for browsing, calls, gaming or
+other devices.
+
+Unlimited — Recommended removes the artificial cap and lets
+AiDM use as much speed as the server and network allow.
+
+This setting mainly affects downloads handled by aria2c,
+including direct files and normal YouTube transfers. For
+browser-assisted HLS/DASH streams, AiDM applies the equivalent
+limit to yt-dlp's native downloader.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+No long performance benchmark is required.
+
+A short wiring test is sufficient.
+
+Suggested implementation-phase checks:
+
+```text
+2 MB/s
+→ verify transfer speed is constrained around the configured cap
+
+Unlimited
+→ verify the artificial cap is removed
+```
+
+Test at least one aria2c-backed transfer.
+
+A short browser-assisted HLS/DASH check should also verify that the equivalent yt-dlp rate limit is passed correctly.
+
+Full download completion is not required solely for validating this setting.
 
 ---
 
-### 6.4 Retry count
+### 6.4 Retry attempts — LOCKED DESIGN
 
-Relevant aria2c option:
+Primary aria2c option:
 
 ```text
 --max-tries
 ```
 
-Friendly setting:
+Friendly control:
 
 ```text
 Retry attempts
 ```
 
-This is primarily a reliability control.
+aria2c is the primary target for this setting because it performs most current AiDM transfers.
 
-Higher values can help unstable connections but can also make a permanently broken download take longer to fail.
+For browser-assisted HLS/DASH, AiDM applies the equivalent general retry setting to yt-dlp.
+
+#### Locked choices
+
+The first version should expose:
+
+```text
+Auto — Recommended
+3 — Quick failure
+5 — Balanced
+10 — Persistent
+```
+
+#### Auto — Recommended
+
+`Auto` preserves the normal retry behavior of whichever engine is actually transferring the data.
+
+Conceptually:
+
+```text
+aria2c-backed downloads
+→ keep aria2c's normal retry behavior
+
+browser-assisted HLS/DASH via yt-dlp
+→ keep yt-dlp's normal retry behavior
+```
+
+This avoids silently changing established retry behavior for users who never modify the setting.
+
+#### 3 — Quick failure
+
+Use fewer retries.
+
+Useful when the user prefers a broken download to fail sooner rather than waiting through many repeated attempts.
+
+#### 5 — Balanced
+
+A moderate retry policy.
+
+Useful for ordinary unstable connections without making failures excessively slow to surface.
+
+#### 10 — Persistent
+
+A more patient retry policy.
+
+Useful when:
+
+- the connection is weak;
+- the server is temporarily unreliable;
+- occasional failures are expected.
+
+A permanently broken download may take longer to give up.
+
+#### Engine mapping
+
+When the user selects an explicit numeric value:
+
+```text
+aria2c
+→ --max-tries=N
+
+yt-dlp native HLS/DASH
+→ --retries N
+```
+
+The GUI exposes one AiDM concept while the backend applies the corresponding flag to the actual transfer engine.
+
+#### Applicability
+
+```text
+Direct single                         yes, via aria2c
+Direct bulk sequential                yes, via aria2c
+Direct bulk parallel                  yes, via aria2c
+Normal YouTube transfer via aria2c    yes, via aria2c
+Other aria2c-backed media             yes
+
+Browser-assisted HLS/DASH             yes, via yt-dlp --retries
+```
+
+#### Important distinction
+
+This setting controls **general download/connection retry attempts**.
+
+It is separate from:
+
+```text
+Stream fragment retries
+→ yt-dlp --fragment-retries
+```
+
+HLS/DASH fragment retry behavior is a separate control because retrying one failed media fragment is different from retrying the broader download/request stage.
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Retry attempts
+
+Controls how many times AiDM retries after a temporary download
+or connection failure. More retries can help unstable networks,
+but a permanently broken download will take longer to give up.
+
+Auto — Recommended keeps the normal retry behavior of the active
+download engine. 3 gives up sooner, 5 is balanced, and 10 is
+more persistent.
+
+For most downloads this controls aria2c. For browser-assisted
+HLS/DASH streams, AiDM applies the equivalent retry setting to
+yt-dlp.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+No long failure simulation is required.
+
+Implementation-phase checks only need to verify that:
+
+- Auto leaves explicit retry flags unset;
+- numeric choices map to the correct engine flag;
+- aria2c receives `--max-tries=N`;
+- browser-assisted HLS/DASH receives yt-dlp `--retries N`.
+
+A deliberately flaky network test is optional rather than required for first implementation.
 
 ---
 
 ## 7. Important yt-dlp controls
 
-### 7.1 HLS/DASH fragment concurrency
+### 7.1 Concurrent stream fragments — LOCKED DESIGN
 
 Relevant yt-dlp option:
 
@@ -378,67 +1359,189 @@ Relevant yt-dlp option:
 --concurrent-fragments
 ```
 
-This controls how many HLS/DASH fragments yt-dlp's native downloader fetches simultaneously.
-
-Friendly setting:
-
-```text
-Stream fragments
-```
-
-or:
+Friendly control:
 
 ```text
 Concurrent stream fragments
 ```
 
-Typical conceptual values:
+This control applies when yt-dlp's **native HLS/DASH fragment downloader** is actually transferring the media.
+
+For the current GUI architecture, the main use case is:
 
 ```text
-1 — Conservative
+Browser-assisted HLS/DASH
+→ yt-dlp native downloader
+```
+
+#### Locked choices
+
+The first version should expose:
+
+```text
+1 — Maximum compatibility
 4 — Recommended
 8 — Best performance
 ```
 
-These values are examples only and must be validated.
+The default/recommended value is:
 
-Expected effect:
+```text
+4
+```
 
-- `1`: safest / least aggressive;
-- higher values: more fragments downloaded concurrently;
-- may significantly improve throughput on fragmented media;
-- may increase server pressure;
-- may not improve speed on restrictive servers.
+No Auto option is needed for this control.
 
-This is especially relevant to:
+Unlike aria2-backed routes, there is no need to preserve different route-specific connection defaults here. The setting exists specifically to control yt-dlp native fragment concurrency.
 
-- HLS;
-- DASH;
-- Stream Inspector workflows using yt-dlp native fragment downloading.
+#### 1 — Maximum compatibility
+
+Meaning:
+
+```text
+one HLS/DASH fragment downloaded at a time
+```
+
+Expected behavior:
+
+- least aggressive;
+- safest with restrictive servers;
+- useful if higher concurrency causes errors;
+- may be slower on servers that support parallel fragment fetching.
+
+#### 4 — Recommended
+
+Meaning:
+
+```text
+up to four HLS/DASH fragments downloaded concurrently
+```
+
+Expected behavior:
+
+- balanced concurrency;
+- recommended general-purpose choice;
+- can improve stream download throughput without using the strongest exposed setting.
+
+#### 8 — Best performance
+
+Meaning:
+
+```text
+up to eight HLS/DASH fragments downloaded concurrently
+```
+
+Expected behavior:
+
+- strongest performance-oriented value exposed in the first version;
+- may provide higher throughput on servers that benefit from fragment concurrency;
+- is not guaranteed to be faster on every server;
+- some servers may restrict or throttle higher concurrency.
+
+The label `Best performance` means the strongest performance-oriented choice intentionally exposed by AiDM, not a universal speed guarantee.
+
+#### Applicability
+
+Applies to:
+
+```text
+Browser-assisted HLS/DASH using yt-dlp native fragments    yes
+Future naked HLS/DASH GUI path using yt-dlp native         yes
+```
+
+Does not apply to:
+
+```text
+Direct single                                               no
+Direct bulk sequential                                      no
+Direct bulk parallel                                        no
+Normal YouTube transfer delegated to aria2c                 no
+Other aria2c-backed media transfers                         no
+```
+
+The fact that yt-dlp participates in a route does not make this setting relevant unless yt-dlp's native fragment downloader is the component transferring the media.
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Concurrent stream fragments
+
+Controls how many pieces of an HLS/DASH stream yt-dlp
+downloads at the same time. Higher values can improve stream
+download speed, but some servers may not benefit from extra
+concurrency.
+
+1 offers maximum compatibility, 4 is recommended, and 8 is
+the performance-oriented choice.
+
+This setting affects browser-assisted HLS/DASH downloads
+handled by yt-dlp's native fragment downloader. It does not
+affect direct downloads or normal YouTube transfers handled
+by aria2c.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+No long download session is required.
+
+A short browser-assisted HLS/DASH test is enough.
+
+Suggested implementation-phase checks:
+
+```text
+-N 1 → run briefly
+-N 4 → run briefly
+-N 8 → run briefly
+```
+
+About 20–30 seconds per run is sufficient.
+
+The purpose is to verify:
+
+- the selected value is correctly passed to yt-dlp;
+- fragment concurrency remains operational;
+- no obvious failure appears;
+- 4 and 8 remain sane choices.
+
+Full stream completion is not required solely for validating this setting.
 
 ---
 
 ### 7.2 General retry count
 
-Relevant yt-dlp option:
+yt-dlp native uses:
 
 ```text
 --retries
 ```
 
-Friendly setting:
+The user does **not** receive a separate yt-dlp general-retry control.
+
+The single locked AiDM control is defined in:
 
 ```text
-Retry attempts
+6.4 Retry attempts — LOCKED DESIGN
 ```
 
-AiDM may expose a single high-level retry setting and translate it to the appropriate engine option where practical.
+AiDM applies that setting according to the actual transfer engine:
 
-The exact mapping needs to be designed carefully because yt-dlp and aria2c have different retry semantics.
+```text
+aria2c-backed transfer
+→ --max-tries
+
+yt-dlp-native browser-assisted HLS/DASH
+→ --retries
+```
+
+This remains separate from yt-dlp `--fragment-retries`, which is handled by the dedicated Stream fragment retries control.
 
 ---
 
-### 7.3 Fragment retry count
+### 7.3 Stream fragment retries — LOCKED DESIGN
 
 Relevant yt-dlp option:
 
@@ -446,43 +1549,203 @@ Relevant yt-dlp option:
 --fragment-retries
 ```
 
-Friendly setting:
+Friendly control:
 
 ```text
 Stream fragment retries
 ```
 
-This is specifically useful for fragmented HLS/DASH media.
+This setting applies specifically to HLS/DASH media downloaded by yt-dlp's native fragment downloader.
 
-It controls how persistent yt-dlp should be when individual fragments temporarily fail.
+Its purpose is reliability: if an individual media fragment fails temporarily, yt-dlp can retry that fragment instead of giving up immediately.
+
+This is especially useful on weak or unstable networks.
+
+#### Locked choices
+
+The first version should expose:
+
+```text
+Auto — Recommended
+5 — Balanced
+10 — Persistent
+20 — Very persistent
+```
+
+#### Auto — Recommended
+
+Auto preserves yt-dlp's normal fragment retry behavior.
+
+AiDM should not add an explicit `--fragment-retries` value when Auto is selected.
+
+This keeps the engine's proven default behavior unless the user explicitly asks for a more persistent policy.
+
+#### 5 — Balanced
+
+A moderate manual retry policy.
+
+Useful when the user wants some added resilience without making permanently unavailable fragments wait too long.
+
+#### 10 — Persistent
+
+A stronger retry policy.
+
+Useful for:
+
+- unstable Wi-Fi;
+- weak mobile connections;
+- temporary packet loss;
+- streaming servers that occasionally fail individual fragment requests.
+
+#### 20 — Very persistent
+
+The strongest fragment-retry value exposed in the first version.
+
+Useful when successful completion matters more than failing quickly.
+
+Trade-off:
+
+A permanently unavailable fragment can take considerably longer to give up.
+
+#### Backend mapping
+
+When the user selects an explicit numeric value:
+
+```text
+5
+→ --fragment-retries 5
+
+10
+→ --fragment-retries 10
+
+20
+→ --fragment-retries 20
+```
+
+When Auto is selected:
+
+```text
+do not add an explicit --fragment-retries override
+```
+
+#### Applicability
+
+Applies to:
+
+```text
+Browser-assisted HLS/DASH using yt-dlp native fragments    yes
+Future naked HLS/DASH GUI path using yt-dlp native         yes
+```
+
+Does not apply to:
+
+```text
+Direct single                                               no
+Direct bulk sequential                                      no
+Direct bulk parallel                                        no
+Normal YouTube transfers delegated to aria2c                no
+Other aria2c-backed transfers                               no
+```
+
+#### Relationship to Retry attempts
+
+This control is separate from the general Retry attempts setting.
+
+```text
+Retry attempts
+→ broader download / connection retry policy
+
+Stream fragment retries
+→ retry one failed HLS/DASH media fragment
+```
+
+Example:
+
+```text
+fragment 527 fails
+→ retry fragment 527
+→ if it succeeds, continue downloading the stream
+```
+
+This separation gives users more resilience without confusing general network retries with per-fragment recovery.
+
+#### Locked information text
+
+The first-version `ⓘ` explanation should communicate:
+
+```text
+Stream fragment retries
+
+Controls how many times AiDM retries an individual HLS/DASH
+fragment when it fails.
+
+Higher values can improve the chance of completing long streams
+on weak or unstable connections, but a permanently unavailable
+fragment will take longer to give up.
+
+Auto — Recommended keeps yt-dlp's normal fragment retry
+behavior. 5 is balanced, 10 is persistent, and 20 is very
+persistent.
+
+This setting affects only browser-assisted HLS/DASH downloads
+handled by yt-dlp's native fragment downloader.
+```
+
+The wording may be polished during final GUI implementation, but the meaning above is locked.
+
+#### Testing requirement
+
+No long unstable-network test is required.
+
+Implementation-phase checks only need to verify:
+
+```text
+Auto
+→ no explicit --fragment-retries override
+
+5
+→ --fragment-retries 5
+
+10
+→ --fragment-retries 10
+
+20
+→ --fragment-retries 20
+```
+
+A real weak-network HLS/DASH test is useful later, but not required to validate the first implementation.
 
 ---
 
 ### 7.4 Bandwidth limit
 
-Relevant yt-dlp option:
+yt-dlp native uses:
 
 ```text
 --limit-rate
 ```
 
-The user should ideally see one AiDM-level concept:
+The user does **not** receive a separate yt-dlp speed-limit control.
+
+The single locked AiDM control is defined in:
 
 ```text
-Download speed limit
+6.3 Download speed limit — LOCKED DESIGN
 ```
 
-AiDM then applies the appropriate engine-specific option depending on which engine actually performs the transfer.
-
-Conceptually:
+AiDM applies that setting to the actual transfer engine:
 
 ```text
-AiDM speed limit
-├─ aria2c → --max-overall-download-limit
-└─ yt-dlp native → --limit-rate
+aria2c-backed transfer
+→ --max-overall-download-limit
+
+yt-dlp-native HLS/DASH transfer
+→ --limit-rate
 ```
 
-This abstraction is preferred over making users configure separate engine-specific speed limits.
+aria2c remains the primary practical target because it performs most current AiDM transfers.
+
+yt-dlp-native rate limiting is mainly relevant to browser-assisted HLS/DASH.
 
 ---
 
@@ -576,17 +1839,17 @@ If AiDM later adds explicit conversion/transcoding features, FFmpeg settings can
 
 ---
 
-## 11. Persistence
+## 11. Persistence — LOCKED DESIGN
 
-User settings should survive application restarts.
+User settings must survive application restarts.
 
-The GUI already uses Qt, so `QSettings` is the preferred persistence mechanism.
+AiDM will use Qt `QSettings`.
 
 Conceptually:
 
 ```text
 AiDM settings
-├─ profile
+├─ performance_profile
 ├─ connections_per_file
 ├─ parallel_files
 ├─ fragment_concurrency
@@ -595,15 +1858,29 @@ AiDM settings
 └─ fragment_retries
 ```
 
-Once changed, settings remain active until the user changes them again or selects:
+Each change is persisted immediately.
+
+There is no separate Save step.
+
+The active settings remain in effect until the user changes them or activates:
 
 ```text
 Restore Defaults
 ```
 
-The actual download process must consume the stored settings.
+Restore Defaults should ask for a small confirmation before replacing several stored values at once.
 
-Settings should not merely affect UI presentation.
+After persistence succeeds, the GUI may show the locked lightweight in-app notification:
+
+```text
+Settings saved
+```
+
+The actual download command builders must consume the stored values.
+
+Settings must never be cosmetic UI-only state.
+
+Changes made while a download is already running apply only to future jobs.
 
 ---
 
@@ -729,6 +2006,14 @@ If the Inspector route ultimately uses yt-dlp as an extractor and delegates the 
 
 AiDM should decide this internally from the actual command path.
 
+### Subtitle sidecars — intentional exception
+
+The applicability rules above concern primary media transfers. Optional subtitle sidecars
+remain internal utility downloads using their existing aria2c command and internal/default
+transfer behavior. They do not receive configurable connections, parallelism, speed limits,
+or retry overrides from `DownloadJob.settings`. This exception also applies after a primary
+transfer that uses explicit settings.
+
 ### Naked HLS/DASH
 
 Naked HLS/DASH remains a CLI capability, while its GUI execution milestone is currently deferred.
@@ -782,64 +2067,73 @@ The settings system must follow these rules:
 
 ---
 
-## 14. Open questions for the next discussion
+## 14. Remaining implementation decisions
 
-Before implementation, decide:
+The control contracts, performance profiles and settings drawer UI are now locked.
 
-1. Exact profile names.
-2. Exact default profile.
-3. Exact numeric values for Conservative / Balanced / Fast.
-4. Which values deserve the labels:
-   - Recommended
-   - Best performance
-5. Safe maximum for:
-   - connections per file;
-   - parallel files;
-   - fragment concurrency.
-6. Whether settings should expose presets only or presets + Custom mode.
-7. Whether changing a single control automatically switches the profile to Custom.
-8. Whether high combined connection counts should show a warning.
-9. Exact tooltip text for every setting.
-10. How one high-level retry setting should map across aria2c and yt-dlp.
-11. Whether bandwidth limit should be global across all engines or configured per engine internally.
-12. Whether the settings surface should be a popover, dialog, stacked page or separate window.
-13. Whether advanced engine names/flags should appear anywhere in the UI.
-14. Whether these settings should initially affect GUI downloads only or be shared with the CLI later.
+Remaining decisions are implementation-level rather than UI-model questions.
+
+Before coding is considered complete, confirm:
+
+1. the exact initial/default persisted state for a brand-new installation, especially how the profile indicator represents AiDM's existing route-specific `Connections per file = Auto` behavior;
+2. whether these settings are initially GUI-only or later shared with the CLI;
+3. the exact PySide6 widget choices and internal settings-state abstraction;
+4. final wording polish for labels and information popovers without changing their locked meaning;
+5. the final Restore Defaults baseline once the new-install default state is locked.
 
 ---
+## 15. Locked design direction
 
-## 15. Current design direction
-
-The current preferred direction is:
+The settings experience is now:
 
 ```text
-⚙ Settings
-   ↓
-simple user-facing controls
-   ↓
-recommended choices clearly marked
-   ↓
-persistent QSettings
-   ↓
+☰
+↓
+right-side settings drawer
+↓
+Performance profile at top
+↓
+simple grouped controls
+↓
+Recommended / compatibility / performance guidance
+↓
+immediate QSettings persistence
+↓
+non-blocking "Settings saved" confirmation
+↓
 route-aware translation
-   ↓
-yt-dlp / aria2c flags
+↓
+aria2c / yt-dlp flags
 ```
 
-The intended experience is:
+The intended user experience is:
 
 ```text
 user wants more control
         ↓
-opens Settings
+opens the side drawer
         ↓
-reads simple explanation
+main AiDM surface stays visible but dimmed
         ↓
-sees Recommended / Best performance guidance
+chooses a profile or individual setting
         ↓
-chooses safely
+AiDM persists the value immediately
         ↓
-AiDM handles engine complexity
+small saved confirmation appears
+        ↓
+user closes drawer by ☰ or dimmed area
+        ↓
+next download job consumes the new settings
 ```
 
-This document should continue evolving through discussion and testing before any implementation begins.
+The first-version settings design is intentionally constrained:
+
+- no raw engine flags;
+- no Custom bandwidth value;
+- no excessive concurrency values;
+- no Save button;
+- no live mutation of an already-running download;
+- no real-time blur requirement;
+- no FFmpeg performance controls.
+
+Implementation should preserve these locked behaviors unless a later design change is explicitly discussed and documented.

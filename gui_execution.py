@@ -16,6 +16,7 @@ from aria2_parallel_progress import Aria2ParallelProgressParser, Aria2Snapshot
 from downloader import (
     build_direct_command, build_direct_bulk_parallel_command, build_stream_command,
     build_ytdlp_media_command, build_subtitle_command, select_subtitle_sidecar,
+    build_proxy_media_command,
 )
 from inspection import InputKind
 from stream_parser import StreamInput
@@ -272,7 +273,8 @@ class DirectDownloadProcess(DownloadProcess):
         self._progress_parser = Aria2ProgressParser(self.on_filename)
 
     def build_command(self):
-        return build_direct_command(self.job.urls[0], self.job.destination, telemetry=True)
+        return build_direct_command(self.job.urls[0], self.job.destination, telemetry=True,
+                                    settings=self.job.settings)
 
     def consume_stdout(self, chunk, *, final=False):
         for event in self._progress_parser.feed(chunk, final=final):
@@ -307,7 +309,8 @@ class DirectBulkDownloadProcess(DownloadProcess):
 
     def build_command(self):
         if not self._parallel:
-            return build_direct_command(self.job.urls[self._index - 1], self.job.destination, telemetry=True)
+            return build_direct_command(self.job.urls[self._index - 1], self.job.destination, telemetry=True,
+                                        settings=self.job.settings)
         if self._input_directory is None:
             self._input_directory = TemporaryDirectory(prefix="aidm-gui-bulk-")
             input_path = Path(self._input_directory.name) / "urls.txt"
@@ -315,6 +318,7 @@ class DirectBulkDownloadProcess(DownloadProcess):
         return build_direct_bulk_parallel_command(
             str(Path(self._input_directory.name) / "urls.txt"), len(self.job.urls),
             self.job.destination, telemetry=True,
+            settings=self.job.settings,
         )
 
     def start(self):
@@ -406,6 +410,55 @@ class DirectBulkDownloadProcess(DownloadProcess):
         return stopped
 
 
+class GenericDownloadProcess(DownloadProcess):
+    """Let yt-dlp extract an unverified URL using the existing transfer policy."""
+
+    engine = "yt-dlp"
+    owns_process_group = True
+
+    def __init__(self, job: DownloadJob, parent=None):
+        if job.kind != InputKind.GENERIC_YTDLP and job.proxy is None:
+            raise ValueError("Generic execution requires GENERIC_YTDLP")
+        super().__init__(job, parent)
+        self._runtime_title = None
+        self._progress_parser = YtDlpProgressParser(
+            self.on_title if job.kind == InputKind.GENERIC_YTDLP else None,
+        )
+        self._last_status = None
+
+    def build_command(self):
+        if self.job.proxy is not None:
+            return build_proxy_media_command(
+                self.job.urls[0], self.job.proxy, self.job.title, self.job.headers,
+                destination=self.job.destination, telemetry=True,
+                resolve_title=self.job.kind == InputKind.GENERIC_YTDLP,
+            )
+        return build_ytdlp_media_command(
+            self.job.urls[0], self.job.title,
+            destination=self.job.destination, telemetry=True,
+            settings=self.job.settings,
+            resolve_title=True,
+        )
+
+    def on_title(self, title):
+        if (not self.done and not self.closing and not self.abort_requested
+                and title != self._runtime_title):
+            self._runtime_title = title
+            # The existing runtime identity signal updates the shared title area
+            # without changing the immutable job or its output filename policy.
+            self.filename_resolved.emit(title)
+
+    def consume_stdout(self, chunk, *, final=False):
+        for event in self._progress_parser.feed(chunk, final=final):
+            if self.done or self.closing or self.abort_requested:
+                break
+            if isinstance(event, ProgressEvent):
+                self.progress_event.emit(event)
+            elif isinstance(event, StatusEvent) and event != self._last_status:
+                self._last_status = event
+                self.status_event.emit(event)
+
+
 class StreamInspectorDownloadProcess(DownloadProcess):
     """One browser-assisted attempt: main media, then an optional subtitle."""
 
@@ -431,7 +484,7 @@ class StreamInspectorDownloadProcess(DownloadProcess):
             return build_subtitle_command(
                 self._subtitle_url, job.title, job.headers, destination=job.destination,
             )
-        options = dict(destination=job.destination, telemetry=True)
+        options = dict(destination=job.destination, telemetry=True, settings=job.settings)
         stream_type = {InputKind.HLS: "hls", InputKind.DASH: "dash"}.get(job.route_kind)
         if stream_type is not None:
             return build_stream_command(StreamInput(
@@ -531,7 +584,7 @@ class YouTubeDownloadProcess(DownloadProcess):
         self._batch = SequentialBatchProgress(total) if total is not None else None
 
     def build_command(self):
-        options = dict(destination=self.job.destination, telemetry=True)
+        options = dict(destination=self.job.destination, telemetry=True, settings=self.job.settings)
         if self.job.kind == InputKind.YOUTUBE_PLAYLIST:
             height = None if self.job.video_quality == VideoQuality.BEST else self.job.video_quality
             return build_youtube_playlist_command(self.job.urls[0], height, **options)
@@ -588,12 +641,17 @@ class YouTubeDownloadProcess(DownloadProcess):
 
 def create_download_process(job: DownloadJob, parent=None) -> DownloadProcess:
     """Only implemented adapters belong here; unsupported routes stay deferred."""
+    if job.proxy is not None:
+        # Reuse the single yt-dlp lifecycle, never the multi-stage sidecar adapter.
+        return GenericDownloadProcess(job, parent)
     if job.kind == InputKind.STREAM_INSPECTOR:
         return StreamInspectorDownloadProcess(job, parent)
     if job.kind == InputKind.DIRECT_SINGLE:
         return DirectDownloadProcess(job, parent)
     if job.kind == InputKind.DIRECT_BULK:
         return DirectBulkDownloadProcess(job, parent)
+    if job.kind == InputKind.GENERIC_YTDLP:
+        return GenericDownloadProcess(job, parent)
     if job.kind in {InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK, InputKind.YOUTUBE_PLAYLIST}:
         return YouTubeDownloadProcess(job, parent)
     raise UnsupportedExecution("GUI execution is not implemented for this job")

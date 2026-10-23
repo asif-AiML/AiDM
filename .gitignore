@@ -3,7 +3,8 @@ __pycache__/
 .vscode
 
 # Local tests, fixtures, and supporting documentation
-/tests/
+/tests/*
+!/tests/test_gui_execution.py
 
 # Test/tool caches and generated coverage reports
 .pytest_cache/

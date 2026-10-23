@@ -18,6 +18,8 @@ from workflow_warning import WorkflowWarning
 DOWNLOAD_PREFIX = "AIDM_PROGRESS:"
 POSTPROCESS_PREFIX = "AIDM_POSTPROCESS:"
 ITEM_PREFIX = "AIDM_ITEM:"
+TITLE_PREFIX = "AIDM_TITLE:"
+TITLE_TEMPLATE = "before_dl:" + TITLE_PREFIX + "%(.{title})j"
 ITEM_TEMPLATE = "before_dl:" + ITEM_PREFIX + "%(.{video_autonumber,title})j"
 PLAYLIST_ITEM_TEMPLATE = "before_dl:" + ITEM_PREFIX + "%(.{playlist_autonumber,n_entries,title})j"
 DOWNLOAD_TEMPLATE = (
@@ -30,13 +32,26 @@ POSTPROCESS_TEMPLATE = (
 )
 
 
-def ytdlp_telemetry_options() -> list[str]:
+def ytdlp_telemetry_options(*, resolve_title=False) -> list[str]:
     """GUI-only output options shared by every yt-dlp command path."""
     return [
         "--newline", "--progress", "--no-color",
         "--progress-template", DOWNLOAD_TEMPLATE,
         "--progress-template", POSTPROCESS_TEMPLATE,
+        *(["--print", TITLE_TEMPLATE] if resolve_title else []),
     ]
+
+
+def parse_ytdlp_title(line: str) -> str | None:
+    """Display metadata, not a filename: preserve Unicode and punctuation."""
+    if not line.startswith(TITLE_PREFIX) or len(line) > YtDlpProgressParser.MAX_RECORD_BYTES:
+        return None
+    try:
+        data = json.loads(line[len(TITLE_PREFIX):])
+    except (ValueError, RecursionError):
+        return None
+    title = data.get("title") if isinstance(data, dict) else None
+    return title if isinstance(title, str) and title.strip() and "\x00" not in title else None
 
 
 def _number(value):
@@ -113,7 +128,8 @@ class YtDlpProgressParser:
 
     MAX_RECORD_BYTES = 8192
 
-    def __init__(self):
+    def __init__(self, on_title=None):
+        self.on_title = on_title
         self._buffer = b""
         self._discarding = False
 
@@ -129,7 +145,12 @@ class YtDlpProgressParser:
                     self._buffer += part
             if index < len(parts) - 1 or final:
                 if not self._discarding:
-                    events.extend(parse_ytdlp_record(self._buffer.decode("utf-8", errors="replace")))
+                    line = self._buffer.decode("utf-8", errors="replace")
+                    if self.on_title is not None:
+                        title = parse_ytdlp_title(line)
+                        if title is not None:
+                            self.on_title(title)
+                    events.extend(parse_ytdlp_record(line))
                 self._buffer = b""
                 self._discarding = False
         return events

@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from threading import Thread
 
-from PySide6.QtCore import QObject, QSettings, Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -29,12 +29,15 @@ from PySide6.QtWidgets import (
 )
 
 from download_job import AudioFormat, DownloadJob, YouTubeMode, BulkMode, VideoQuality, build_download_job
+from download_settings import DownloadSettings
+from proxy_settings import ProxySettings
 from gui_input import validate_gui_input
 from gui_execution import create_download_process, ExecutionOutcome, UnsupportedExecution
 from gui_metadata import MetadataProcess
 from gui_quality import QualityProcess
 from gui_progress import format_statistics
-from inspection import classify_input, InputKind, MetadataStatus
+from gui_settings_drawer import SettingsDrawer
+from inspection import classify_input, classify_proxy_input, InputKind, MetadataStatus
 from metadata import prepare_metadata
 from status_event import StatusEvent, StatusKind, StatusReason
 from progress_event import ProgressEvent
@@ -188,6 +191,8 @@ class AiDMWindow(QMainWindow):
     def __init__(self, *, settings: QSettings | None = None) -> None:
         super().__init__()
         self.settings = settings if settings is not None else QSettings("AiDM", "AiDM")
+        self.download_settings = DownloadSettings(self.settings)
+        self.proxy_settings = ProxySettings(self.settings)
         self.destination = initial_destination(self.settings)
         self.setWindowTitle("AiDM v0.1.0")
         self.resize(480, 200)
@@ -205,6 +210,27 @@ class AiDMWindow(QMainWindow):
         heading_font.setBold(True)
         self.heading.setFont(heading_font)
         layout.addWidget(self.heading)
+
+        self.proxy_indicator = QWidget()
+        self.proxy_indicator.setObjectName("proxyIndicator")
+        self.proxy_indicator.setStyleSheet(
+            "QWidget#proxyIndicator { border: 1px solid palette(highlight); border-radius: 4px; }"
+        )
+        indicator_layout = QVBoxLayout(self.proxy_indicator)
+        self.proxy_indicator_text = QLabel(
+            "Proxy Mode is ON — only single proxied downloads are available.\n"
+            "Turn it off to restore all AiDM features."
+        )
+        self.proxy_indicator_text.setWordWrap(True)
+        self.proxy_indicator_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        indicator_layout.addWidget(self.proxy_indicator_text)
+        self.proxy_off_button = QPushButton("Turn Off")
+        self.proxy_off_button.setAccessibleName("Turn off Proxy Mode")
+        self.proxy_off_button.installEventFilter(self)
+        self.proxy_off_button.clicked.connect(lambda: self.proxy_settings.set_enabled(False))
+        indicator_layout.addWidget(self.proxy_off_button, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.proxy_indicator)
+        self.proxy_indicator.hide()
 
         self.input_field = QLineEdit()
         self.input_field.setPlaceholderText("Paste URL or AiDM data")
@@ -377,14 +403,16 @@ class AiDMWindow(QMainWindow):
         layout.addStretch()
 
         self.setCentralWidget(content)
+        self.settings_drawer = SettingsDrawer(content, self.download_settings, self.proxy_settings)
+        self.settings_button = self.settings_drawer.button
         # Match visual order across dynamically revealed sections. Qt skips
         # hidden/disabled controls and preserves native radio-group navigation.
         tab_order = (
-            self.input_field, *self.mode_buttons.values(), *self.audio_buttons.values(),
+            self.proxy_off_button, self.input_field, *self.mode_buttons.values(), *self.audio_buttons.values(),
             self.thumbnail_choice, *self.bulk_buttons.values(),
             self.quality_choice, self.destination_field, self.browse_button,
             self.download_button, self.abort_button, self.retry_button,
-            self.open_folder_button,
+            self.open_folder_button, self.settings_button,
         )
         for current, following in zip(tab_order, tab_order[1:]):
             QWidget.setTabOrder(current, following)
@@ -427,6 +455,33 @@ class AiDMWindow(QMainWindow):
             shortcut.activated.connect(self.on_download_intent)
             self._enter_shortcuts.append(shortcut)
         self.set_state(GuiState.EMPTY)
+        self.proxy_settings.on_change = self.on_proxy_changed
+
+    def on_proxy_changed(self):
+        self.proxy_indicator.setVisible(self.proxy_settings.enabled)
+        self.settings_drawer.refresh_proxy_state()
+        # The current attempt and terminal Retry retain their immutable jobs.
+        # Invalidate pending normal-mode probes even during a running attempt.
+        self._revision += 1
+        self._pending = None
+        self._inspection_timer.stop()
+        self.cancel_metadata()
+        self.cancel_quality()
+        if not self.download_active() and self.current_state not in {
+                GuiState.FAILED, GuiState.ABORTED, GuiState.COMPLETE}:
+            self.on_input_changed(self.input_field.text())
+
+    def eventFilter(self, watched, event):
+        # Give the new action Enter without invoking the window's Download
+        # shortcut. Space retains native QPushButton behavior.
+        if (watched is self.proxy_off_button
+                and event.type() in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress)
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)):
+            event.accept()
+            if event.type() == QEvent.Type.KeyPress:
+                self.proxy_off_button.click()
+            return True
+        return super().eventFilter(watched, event)
 
     def browse_destination(self):
         if self.download_active():
@@ -484,6 +539,8 @@ class AiDMWindow(QMainWindow):
                     })
 
     def requires_options(self):
+        if self.proxy_settings.enabled:
+            return False
         return self.inspection_result.kind in {
             InputKind.YOUTUBE_SINGLE, InputKind.YOUTUBE_BULK,
             InputKind.YOUTUBE_PLAYLIST, InputKind.DIRECT_BULK,
@@ -518,6 +575,8 @@ class AiDMWindow(QMainWindow):
         self._execution_deferred = False
 
     def on_download_intent(self):
+        if self.settings_drawer.blocks_input:
+            return
         if self.current_state != GuiState.READY or not self.usable_input():
             return
         if not self._configuration_started and self.requires_options():
@@ -695,6 +754,8 @@ class AiDMWindow(QMainWindow):
         self.update_configuration()
 
     def start_quality(self):
+        if self.proxy_settings.enabled:
+            return
         self.cancel_quality()
         self.download_job = None
         self._quality_pending = True
@@ -730,6 +791,16 @@ class AiDMWindow(QMainWindow):
         if not self.usable_input():
             self.set_state(GuiState.NEEDS_OPTIONS)
             return
+        if self.proxy_settings.enabled:
+            try:
+                self.download_job = build_download_job(
+                    self.inspection_result, destination=self.checked_destination(),
+                    settings=self.download_settings.values, proxy=self.proxy_settings.snapshot,
+                )
+            except ValueError as error:
+                self._configuration_error = str(error)
+            self.set_state(GuiState.READY if self.download_job else GuiState.NEEDS_OPTIONS)
+            return
         if self.requires_options() and not self._configuration_started:
             self.set_state(GuiState.READY)
             return
@@ -751,6 +822,7 @@ class AiDMWindow(QMainWindow):
                     self.inspection_result, destination=self.checked_destination(),
                     mode=mode, video_quality=quality, bulk_mode=bulk,
                     audio_format=audio_format, embed_thumbnail=self.thumbnail_choice.isChecked(),
+                    settings=self.download_settings.values,
                 )
             except ValueError as error:
                 self._configuration_error = str(error)
@@ -782,12 +854,16 @@ class AiDMWindow(QMainWindow):
         empty = not self.input_result.argv and self.input_result.error is None
         self.set_state(GuiState.EMPTY if empty else GuiState.INSPECTING)
         if self.input_result.args is not None:
-            self._pending = (self._revision, self.input_result.args)
-            self._inspection_timer.start()
+            if self.proxy_settings.enabled:
+                self.inspection_result = classify_proxy_input(self.input_result.args)
+                self.update_configuration()
+            else:
+                self._pending = (self._revision, self.input_result.args)
+                self._inspection_timer.start()
 
     def start_inspection(self) -> None:
         # At most one probe runs; retain only the latest pending input.
-        if self._worker is not None or self._pending is None or self._closing:
+        if self.proxy_settings.enabled or self._worker is not None or self._pending is None or self._closing:
             return
         revision, args = self._pending
         self._pending = None
@@ -828,11 +904,13 @@ class AiDMWindow(QMainWindow):
             self.inspection_result, destination=self.checked_destination(), mode=mode,
             video_quality=video_quality, bulk_mode=bulk_mode,
             audio_format=audio_format, embed_thumbnail=embed_thumbnail,
+            settings=self.download_settings.values,
+            proxy=self.proxy_settings.snapshot,
         )
 
     def start_metadata(self) -> None:
         result = self.inspection_result
-        if self._closing or result is None or result.metadata_status != MetadataStatus.PENDING:
+        if self.proxy_settings.enabled or self._closing or result is None or result.metadata_status != MetadataStatus.PENDING:
             return
         self._metadata = MetadataProcess(self._revision, result, self)
         self._metadata.finished.connect(self.finish_metadata)
@@ -1015,6 +1093,9 @@ class AiDMWindow(QMainWindow):
         self.statistics.setText(statistics)
         self.statistics.setVisible(telemetry_visible and bool(statistics))
         download_status = render_status(self._download_event, batch) if self._download_event else ""
+        if (self._download_event and self._download_event.kind == StatusKind.FAILED
+                and self._download_process and self._download_process.job.proxy is not None):
+            download_status = "Proxied download failed. Check the proxy server and URL. No direct retry was made."
         if downloading:
             status = download_status or "Download status placeholder (no download running)"
         elif self.input_result.error is not None:

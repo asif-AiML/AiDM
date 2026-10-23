@@ -6,7 +6,9 @@ import os.path
 from types import MappingProxyType
 from typing import Mapping
 
-from inspection import InputKind, InspectionResult
+from inspection import InputKind, InspectionResult, PROXY_UNSUPPORTED
+from download_settings import SettingsValues
+from proxy_settings import ProxyEndpoint
 
 
 class YouTubeMode(Enum):
@@ -60,8 +62,20 @@ class DownloadJob:
     item_count: int | None = None
     audio_format: AudioFormat | None = None
     embed_thumbnail: bool = False
+    settings: SettingsValues | None = None
+    proxy: ProxyEndpoint | None = None  # None is normal mode; never live GUI state.
 
     def __post_init__(self) -> None:
+        if self.settings is not None and not isinstance(self.settings, SettingsValues):
+            raise ValueError("settings must be a validated SettingsValues snapshot or None")
+        if self.proxy is not None:
+            if not isinstance(self.proxy, ProxyEndpoint):
+                raise ValueError("proxy must be a validated ProxyEndpoint snapshot or None")
+            supported_proxy = {InputKind.DIRECT_SINGLE, InputKind.GENERIC_YTDLP,
+                               InputKind.YOUTUBE_SINGLE, InputKind.HLS, InputKind.DASH}
+            route = self.route_kind if self.kind == InputKind.STREAM_INSPECTOR else self.kind
+            if route not in supported_proxy or len(self.urls) != 1 or self.bulk_mode is not None:
+                raise ValueError(PROXY_UNSUPPORTED)
         # Filesystem availability belongs to the frontend/execution boundary.
         # Keep a normalized absolute snapshot without probing or creating paths.
         if (not isinstance(self.destination, str) or not self.destination.strip()
@@ -150,6 +164,8 @@ def build_download_job(
     bulk_mode: BulkMode | None = None,
     audio_format: AudioFormat | None = None,
     embed_thumbnail: bool = False,
+    settings: SettingsValues | None = None,
+    proxy: ProxyEndpoint | None = None,
 ) -> DownloadJob:
     """Snapshot classification and explicit choices; never inspect or execute."""
     if result.error is not None:
@@ -174,4 +190,5 @@ def build_download_job(
         route_kind=result.route_kind,
         item_count=result.item_count if result.route == InputKind.YOUTUBE_PLAYLIST else None,
         audio_format=audio_format, embed_thumbnail=embed_thumbnail,
+        settings=settings, proxy=proxy,
     )

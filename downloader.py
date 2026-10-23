@@ -6,12 +6,56 @@ from stream_parser import StreamInput
 from utils import run_command, sanitize_filename
 from workflow_warning import WorkflowWarning
 from ytdlp_progress import ytdlp_telemetry_options
+from download_settings import SettingsValues
+from download_options import aria2_settings_options, native_stream_settings_options
+from proxy_settings import ProxyEndpoint
 
 ARIA2_DOWNLOADER_ARGUMENTS = "aria2c:-x 8 -s 8 -k 1M"
 ARIA2_GUI_TELEMETRY_ARGUMENTS = (
     " --show-console-readout=true --enable-color=false"
     " --truncate-console-readout=false --human-readable=false --summary-interval=1"
 )
+
+
+def build_proxy_media_command(
+    url: str, proxy: ProxyEndpoint, title: str | None = None,
+    headers: dict[str, str] | None = None, *, destination: str | None = None,
+    telemetry: bool = False, resolve_title: bool = False,
+) -> list[str]:
+    """Isolated single-target SOCKS path; normal builders and CLI stay unchanged."""
+    if not isinstance(proxy, ProxyEndpoint):
+        raise ValueError("A validated SOCKS endpoint is required")
+    # Restrict formats to yt-dlp HTTP/native stream protocols. FFmpeg can be
+    # selected internally for unsupported/live HLS and does not support SOCKS:
+    # deny its network input protocols rather than allowing a direct fallback.
+    protocol = '[protocol~="^(https?|m3u8_native|m3u8|http_dash_segments)$"]'
+    command = [
+        "yt-dlp", "--ignore-config", "--no-plugin-dirs",
+        "--proxy", proxy.url, "--no-playlist", "--playlist-items", "1",
+        "--break-match-filters", "!playlist",
+        "--downloader", "native",
+        "--downloader-args", "ffmpeg_i:-protocol_whitelist file,pipe,crypto,data",
+        "-f", f"bv*{protocol}+ba{protocol}/b{protocol}",
+    ]
+    if title:
+        command.extend(["-o", f"{sanitize_filename(title)}.%(ext)s"])
+    for name, value in (headers or {}).items():
+        command.extend(["--add-header", f"{name}:{value}"])
+    if destination is not None:
+        command.extend(["-P", destination])
+    if telemetry:
+        command.extend(ytdlp_telemetry_options(resolve_title=resolve_title))
+    return command + ["--", url]
+
+
+def build_aria2_downloader_arguments(settings: SettingsValues | None = None, *, telemetry=False):
+    """Scope options to the existing aria2 handoff, retaining its Auto policy."""
+    arguments = ARIA2_DOWNLOADER_ARGUMENTS
+    if settings is not None:
+        arguments = "aria2c:" + " ".join(aria2_settings_options(
+            settings, auto_connections=8, short_connections=True,
+        ) + ["-k", "1M"])
+    return arguments + (ARIA2_GUI_TELEMETRY_ARGUMENTS if telemetry else "")
 
 
 def select_subtitle_sidecar(subtitles, title):
@@ -79,17 +123,18 @@ def download_torrent(torrent_path: str) -> int:
 
 def build_direct_command(
     url: str, destination: str | None = None, *, telemetry: bool = False,
+    settings: SettingsValues | None = None,
 ) -> list[str]:
     """Shared direct-download flags; omitted destination preserves CLI cwd."""
-    return _direct_options(destination, telemetry=telemetry) + [url]
+    return _direct_options(destination, telemetry=telemetry, settings=settings) + [url]
 
 
-def _direct_options(destination=None, *, telemetry=False):
+def _direct_options(destination=None, *, telemetry=False, settings=None):
     command = [
         "aria2c",
         "--continue=true",
-        "--max-connection-per-server=1",
-        "--split=1",
+        *(aria2_settings_options(settings, auto_connections=1) if settings is not None else
+          ["--max-connection-per-server=1", "--split=1"]),
         "--min-split-size=1M",
         "--console-log-level=warn",
         "--summary-interval=1",
@@ -107,13 +152,15 @@ def _direct_options(destination=None, *, telemetry=False):
 
 def build_direct_bulk_parallel_command(
     input_path: str, total: int, destination: str | None = None, *, telemetry: bool = False,
+    settings: SettingsValues | None = None,
 ) -> list[str]:
     """One aria2 scheduler for all URLs; the caller owns the input file lifetime."""
-    command = _direct_options(destination, telemetry=telemetry)
+    command = _direct_options(destination, telemetry=telemetry, settings=settings)
     if telemetry:
         # Live completion notices supplement per-GID progress summaries.
         command[command.index("--console-log-level=warn")] = "--console-log-level=notice"
-    return command + [f"--max-concurrent-downloads={total}", f"--input-file={input_path}"]
+    parallel = total if settings is None else settings.parallel_files.value
+    return command + [f"--max-concurrent-downloads={parallel}", f"--input-file={input_path}"]
 
 
 def download_direct(url: str, destination: str | None = None) -> int:
@@ -172,6 +219,7 @@ def download_with_ytdlp(
 def build_ytdlp_media_command(
     url: str, title: str | None = None, headers: dict[str, str] | None = None,
     *, destination: str | None = None, telemetry: bool = False,
+    settings: SettingsValues | None = None, resolve_title: bool = False,
 ) -> list[str]:
 
     command = [
@@ -199,12 +247,14 @@ def build_ytdlp_media_command(
         "--downloader",
         "dash,m3u8:native",
         "--downloader-args",
-        ARIA2_DOWNLOADER_ARGUMENTS + (ARIA2_GUI_TELEMETRY_ARGUMENTS if telemetry else ""),
+        # Extraction decides the protocol. These overrides affect aria2 only;
+        # native fragment settings cannot be inferred for an unverified URL.
+        build_aria2_downloader_arguments(settings, telemetry=telemetry),
     ])
     if destination is not None:
         command.extend(["-P", destination])
     if telemetry:
-        command.extend(ytdlp_telemetry_options())
+        command.extend(ytdlp_telemetry_options(resolve_title=resolve_title))
     return command + [url]
 
 
@@ -218,6 +268,7 @@ def download_stream(stream: StreamInput) -> int:
 
 def build_stream_command(
     stream: StreamInput, *, destination: str | None = None, telemetry: bool = False,
+    settings: SettingsValues | None = None,
 ) -> list[str]:
 
     command = [
@@ -225,6 +276,8 @@ def build_stream_command(
         "--downloader",
         "dash,m3u8:native",
     ]
+    if settings is not None and stream.stream_type in {"hls", "dash"}:
+        command.extend(native_stream_settings_options(settings))
 
     if stream.title:
         safe_title = sanitize_filename(stream.title)
