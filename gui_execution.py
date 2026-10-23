@@ -420,7 +420,10 @@ class GenericDownloadProcess(DownloadProcess):
         if job.kind != InputKind.GENERIC_YTDLP and job.proxy is None:
             raise ValueError("Generic execution requires GENERIC_YTDLP")
         super().__init__(job, parent)
-        self._progress_parser = YtDlpProgressParser()
+        self._runtime_title = None
+        self._progress_parser = YtDlpProgressParser(
+            self.on_title if job.kind == InputKind.GENERIC_YTDLP else None,
+        )
         self._last_status = None
 
     def build_command(self):
@@ -428,12 +431,22 @@ class GenericDownloadProcess(DownloadProcess):
             return build_proxy_media_command(
                 self.job.urls[0], self.job.proxy, self.job.title, self.job.headers,
                 destination=self.job.destination, telemetry=True,
+                resolve_title=self.job.kind == InputKind.GENERIC_YTDLP,
             )
         return build_ytdlp_media_command(
             self.job.urls[0], self.job.title,
             destination=self.job.destination, telemetry=True,
             settings=self.job.settings,
+            resolve_title=True,
         )
+
+    def on_title(self, title):
+        if (not self.done and not self.closing and not self.abort_requested
+                and title != self._runtime_title):
+            self._runtime_title = title
+            # The existing runtime identity signal updates the shared title area
+            # without changing the immutable job or its output filename policy.
+            self.filename_resolved.emit(title)
 
     def consume_stdout(self, chunk, *, final=False):
         for event in self._progress_parser.feed(chunk, final=final):

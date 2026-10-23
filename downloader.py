@@ -20,7 +20,7 @@ ARIA2_GUI_TELEMETRY_ARGUMENTS = (
 def build_proxy_media_command(
     url: str, proxy: ProxyEndpoint, title: str | None = None,
     headers: dict[str, str] | None = None, *, destination: str | None = None,
-    telemetry: bool = False,
+    telemetry: bool = False, resolve_title: bool = False,
 ) -> list[str]:
     """Isolated single-target SOCKS path; normal builders and CLI stay unchanged."""
     if not isinstance(proxy, ProxyEndpoint):
@@ -44,7 +44,7 @@ def build_proxy_media_command(
     if destination is not None:
         command.extend(["-P", destination])
     if telemetry:
-        command.extend(ytdlp_telemetry_options())
+        command.extend(ytdlp_telemetry_options(resolve_title=resolve_title))
     return command + ["--", url]
 
 
@@ -219,7 +219,7 @@ def download_with_ytdlp(
 def build_ytdlp_media_command(
     url: str, title: str | None = None, headers: dict[str, str] | None = None,
     *, destination: str | None = None, telemetry: bool = False,
-    settings: SettingsValues | None = None,
+    settings: SettingsValues | None = None, resolve_title: bool = False,
 ) -> list[str]:
 
     command = [
@@ -254,7 +254,7 @@ def build_ytdlp_media_command(
     if destination is not None:
         command.extend(["-P", destination])
     if telemetry:
-        command.extend(ytdlp_telemetry_options())
+        command.extend(ytdlp_telemetry_options(resolve_title=resolve_title))
     return command + [url]
 
 

@@ -825,7 +825,8 @@ class GuiExecutionTests(unittest.TestCase):
         self.assertFalse(window._execution_deferred)
         self.assertNotIn("execution is not implemented", window.active_status.text())
         self.assertEqual(window.active_status.text(), "Starting yt-dlp… ⚙️")
-        expected = build_ytdlp_media_command(url, destination=str(self.directory), telemetry=True)
+        expected = build_ytdlp_media_command(url, destination=str(self.directory), telemetry=True,
+                                             resolve_title=True)
         self.assertEqual(worker.process.calls, [(expected[0], expected[1:])])
         self.assertTrue(worker.owns_process_group)
         self.assertEqual(worker.process.unix_flags, QProcess.UnixProcessFlag.CreateNewSession)
@@ -837,7 +838,7 @@ class GuiExecutionTests(unittest.TestCase):
                               str(self.directory), title=title)
             worker = create_download_process(job, self.window)
             self.assertEqual(worker.build_command(), build_ytdlp_media_command(
-                job.urls[0], title, destination=job.destination, telemetry=True))
+                job.urls[0], title, destination=job.destination, telemetry=True, resolve_title=True))
 
     def test_generic_native_and_aria2_progress_and_postprocessing(self):
         self.inspect(InputKind.GENERIC_YTDLP)
