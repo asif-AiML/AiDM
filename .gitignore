@@ -1,2 +1,16 @@
 __pycache__/
 *.py[cod]
+.vscode
+
+# Local tests, fixtures, and supporting documentation
+/tests/*
+!/tests/test_gui_execution.py
+
+# Test/tool caches and generated coverage reports
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
