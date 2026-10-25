@@ -1,0 +1,18 @@
+[generic] Extracting URL: http://127.0.0.1:36363/sample.mp4
+[generic] sample: Downloading webpage
+[info] sample: Downloading 1 format(s): mp4
+[download] Destination: /tmp/aidm-m15-capture-tt8v2nd_/native/sample [sample].mp4
+AIDM_PROGRESS:{"progress":{"status": "downloading", "downloaded_bytes": 1024, "total_bytes": 88543},"info":{}}
+AIDM_PROGRESS:{"progress":{"status": "downloading", "downloaded_bytes": 3072, "total_bytes": 88543, "speed": 1987184.1283158544, "eta": 0},"info":{}}
+AIDM_PROGRESS:{"progress":{"status": "downloading", "downloaded_bytes": 7168, "total_bytes": 88543, "speed": 2585327.291426606, "eta": 0},"info":{}}
+AIDM_PROGRESS:{"progress":{"status": "downloading", "downloaded_bytes": 15360, "total_bytes": 88543, "speed": 3941542.333435301, "eta": 0},"info":{}}
+AIDM_PROGRESS:{"progress":{"status": "downloading", "downloaded_bytes": 31744, "total_bytes": 88543, "speed": 6299691.799195647, "eta": 0},"info":{}}
+AIDM_PROGRESS:{"progress":{"status": "downloading", "downloaded_bytes": 64512, "total_bytes": 88543, "speed": 11252721.435914498, "eta": 0},"info":{}}
+AIDM_PROGRESS:{"progress":{"status": "downloading", "downloaded_bytes": 88543, "total_bytes": 88543, "speed": 12917435.098156521, "eta": 0},"info":{}}
+AIDM_PROGRESS:{"progress":{"status": "finished", "downloaded_bytes": 88543, "total_bytes": 88543, "speed": 8710391.666009944},"info":{}}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "ExtractAudio"}
+[ExtractAudio] Destination: /tmp/aidm-m15-capture-tt8v2nd_/native/sample [sample].wav
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "ExtractAudio"}
+Deleting original file /tmp/aidm-m15-capture-tt8v2nd_/native/sample [sample].mp4 (pass -k to keep)
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "MoveFiles"}
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "MoveFiles"}

@@ -1,0 +1,38 @@
+[info] fixture: Downloading 1 format(s): v+a
+[download] Destination: /tmp/aidm-m15-capture-0vouwn1t/video/AiDM local fixture [fixture].fv.mp4
+[download] Writing temporary cookies file to "/tmp/tmp39oyorbx.cookies"
+ *** Download Progress Summary as of Wed Oct  7 12:45:47 2026 *** 
+===============================================================================
+[#cd1a3e 0B/60684B(0%) CN:1 DL:16195B ETA:3s]
+FILE: /tmp/aidm-m15-capture-0vouwn1t/video//./AiDM local fixture [fixture].fv.mp4.part
+-------------------------------------------------------------------------------
+
+[#cd1a3e 0B/60684B(0%) CN:1 DL:16195B ETA:3s]
+ *** Download Progress Summary as of Wed Oct  7 12:45:48 2026 *** 
+===============================================================================
+[#cd1a3e 32768B/60684B(53%) CN:1 DL:24469B ETA:1s]
+FILE: /tmp/aidm-m15-capture-0vouwn1t/video//./AiDM local fixture [fixture].fv.mp4.part
+-------------------------------------------------------------------------------
+
+[#cd1a3e 32768B/60684B(53%) CN:1 DL:24469B ETA:1s]
+AIDM_PROGRESS:{"progress":{"status": "finished", "downloaded_bytes": 60684, "total_bytes": 60684, "speed": 29717.88116193514},"info":{"vcodec": "mp4v", "acodec": "none"}}
+[download] Destination: /tmp/aidm-m15-capture-0vouwn1t/video/AiDM local fixture [fixture].fa.m4a
+[download] Writing temporary cookies file to "/tmp/tmpipon6cch.cookies"
+ *** Download Progress Summary as of Wed Oct  7 12:45:49 2026 *** 
+===============================================================================
+[#024d63 0B/27633B(0%) CN:1 DL:16178B ETA:1s]
+FILE: /tmp/aidm-m15-capture-0vouwn1t/video//./AiDM local fixture [fixture].fa.m4a.part
+-------------------------------------------------------------------------------
+
+[#024d63 0B/27633B(0%) CN:1 DL:16178B ETA:1s]
+AIDM_PROGRESS:{"progress":{"status": "finished", "downloaded_bytes": 27633, "total_bytes": 27633, "speed": 26577.291403562238},"info":{"vcodec": "none", "acodec": "mp4a.40.2"}}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "Merger"}
+[Merger] Merging formats into "/tmp/aidm-m15-capture-0vouwn1t/video/AiDM local fixture [fixture].mp4"
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "Merger"}
+Deleting original file /tmp/aidm-m15-capture-0vouwn1t/video/AiDM local fixture [fixture].fa.m4a (pass -k to keep)
+Deleting original file /tmp/aidm-m15-capture-0vouwn1t/video/AiDM local fixture [fixture].fv.mp4 (pass -k to keep)
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "VideoRemuxer"}
+[VideoRemuxer] Not remuxing media file "/tmp/aidm-m15-capture-0vouwn1t/video/AiDM local fixture [fixture].mp4"; already is in target format mp4
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "VideoRemuxer"}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "MoveFiles"}
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "MoveFiles"}

@@ -1,0 +1,156 @@
+"""Bounded yt-dlp JSON telemetry, plus its external aria2 transfer readouts.
+
+Templates verified with yt-dlp 2026.08.19. Exact totals only; estimated totals
+are deliberately omitted. Percent describes the current stream, not the job.
+"""
+
+import json
+import math
+import re
+
+from aria2_progress import parse_aria2_progress
+from progress_event import ProgressEvent
+from status_event import StatusEvent, StatusKind
+from batch_event import ItemStarted
+from workflow_warning import WorkflowWarning
+
+
+DOWNLOAD_PREFIX = "AIDM_PROGRESS:"
+POSTPROCESS_PREFIX = "AIDM_POSTPROCESS:"
+ITEM_PREFIX = "AIDM_ITEM:"
+TITLE_PREFIX = "AIDM_TITLE:"
+TITLE_TEMPLATE = "before_dl:" + TITLE_PREFIX + "%(.{title})j"
+ITEM_TEMPLATE = "before_dl:" + ITEM_PREFIX + "%(.{video_autonumber,title})j"
+PLAYLIST_ITEM_TEMPLATE = "before_dl:" + ITEM_PREFIX + "%(.{playlist_autonumber,n_entries,title})j"
+DOWNLOAD_TEMPLATE = (
+    'download:' + DOWNLOAD_PREFIX + '{"progress":'
+    '%(progress.{status,downloaded_bytes,total_bytes,total_bytes_estimate,speed,eta})j,'
+    '"info":%(info.{vcodec,acodec})j}'
+)
+POSTPROCESS_TEMPLATE = (
+    "postprocess:" + POSTPROCESS_PREFIX + "%(progress.{status,postprocessor})j"
+)
+
+
+def ytdlp_telemetry_options(*, resolve_title=False) -> list[str]:
+    """GUI-only output options shared by every yt-dlp command path."""
+    return [
+        "--newline", "--progress", "--no-color",
+        "--progress-template", DOWNLOAD_TEMPLATE,
+        "--progress-template", POSTPROCESS_TEMPLATE,
+        *(["--print", TITLE_TEMPLATE] if resolve_title else []),
+    ]
+
+
+def parse_ytdlp_title(line: str) -> str | None:
+    """Display metadata, not a filename: preserve Unicode and punctuation."""
+    if not line.startswith(TITLE_PREFIX) or len(line) > YtDlpProgressParser.MAX_RECORD_BYTES:
+        return None
+    try:
+        data = json.loads(line[len(TITLE_PREFIX):])
+    except (ValueError, RecursionError):
+        return None
+    title = data.get("title") if isinstance(data, dict) else None
+    return title if isinstance(title, str) and title.strip() and "\x00" not in title else None
+
+
+def _number(value):
+    return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
+
+
+def parse_ytdlp_record(line: str) -> list[StatusEvent | ProgressEvent | ItemStarted | WorkflowWarning]:
+    """Only recognize our sentinels or the existing strict aria2 record format."""
+    if len(line) > YtDlpProgressParser.MAX_RECORD_BYTES:
+        return []
+    try:
+        if line == "AIDM_ARTWORK_WARNING:skipped":
+            return [WorkflowWarning.ARTWORK_FAILED]
+        if line.startswith(ITEM_PREFIX):
+            data = json.loads(line[len(ITEM_PREFIX):])
+            if not isinstance(data, dict):
+                return []
+            if "playlist_autonumber" in data:
+                return [ItemStarted(data["playlist_autonumber"], data.get("title"), data.get("n_entries"))]
+            return [ItemStarted(data.get("video_autonumber"), data.get("title"))]
+        if line.startswith(POSTPROCESS_PREFIX):
+            data = json.loads(line[len(POSTPROCESS_PREFIX):])
+            if not isinstance(data, dict) or data.get("status") != "started":
+                return []
+            kind = {
+                "Merger": StatusKind.MERGING,
+                "ExtractAudio": StatusKind.CONVERTING_AUDIO,
+                "AiDMThumbnail": StatusKind.EMBEDDING_THUMBNAIL,
+                "EmbedThumbnail": StatusKind.EMBEDDING_THUMBNAIL,
+                "Metadata": StatusKind.FINALIZING,
+                "VideoRemuxer": StatusKind.REMUXING,
+                "MoveFiles": StatusKind.FINALIZING,
+            }.get(data.get("postprocessor"))
+            # No download metrics are known for post-processing. Clear the old
+            # stream snapshot, without manufacturing post-processing percentage.
+            return [ProgressEvent(), StatusEvent(kind, "yt-dlp")] if kind else []
+        if line.startswith(DOWNLOAD_PREFIX):
+            data = json.loads(line[len(DOWNLOAD_PREFIX):])
+            if not isinstance(data, dict):
+                return []
+            progress, info = data.get("progress"), data.get("info", {})
+            if not isinstance(progress, dict) or not isinstance(info, dict):
+                return []
+            if progress.get("status") not in {"downloading", "finished"}:
+                return []
+            downloaded = _number(progress.get("downloaded_bytes"))
+            total = _number(progress.get("total_bytes")) or None
+            speed = _number(progress.get("speed"))
+            eta = _number(progress.get("eta"))
+            percent = (100 * downloaded / total
+                       if downloaded is not None and total and downloaded <= total else None)
+            event = ProgressEvent(
+                percent=percent,
+                downloaded_bytes=int(downloaded) if downloaded is not None else None,
+                total_bytes=int(total) if total is not None else None,
+                speed_bytes_per_second=int(speed) if speed is not None else None,
+                eta_seconds=int(eta) if eta is not None else None,
+            )
+            kind = StatusKind.DOWNLOADING
+            if progress["status"] == "downloading":
+                if info.get("vcodec") == "none" and info.get("acodec") not in (None, "none"):
+                    kind = StatusKind.DOWNLOADING_AUDIO
+                elif info.get("acodec") == "none" and info.get("vcodec") not in (None, "none"):
+                    kind = StatusKind.DOWNLOADING_VIDEO
+            return [StatusEvent(kind, "yt-dlp"), event]
+    except (ValueError, TypeError, OverflowError, RecursionError):
+        return []
+    event = parse_aria2_progress(line)
+    return [StatusEvent(StatusKind.DOWNLOADING, "yt-dlp"), event] if event else []
+
+
+class YtDlpProgressParser:
+    """Frame arbitrary UTF-8 stdout chunks; discard oversized/unrelated output."""
+
+    MAX_RECORD_BYTES = 8192
+
+    def __init__(self, on_title=None):
+        self.on_title = on_title
+        self._buffer = b""
+        self._discarding = False
+
+    def feed(self, chunk: bytes, *, final=False):
+        events = []
+        parts = re.split(br"[\r\n]", chunk)
+        for index, part in enumerate(parts):
+            if not self._discarding:
+                if len(self._buffer) + len(part) > self.MAX_RECORD_BYTES:
+                    self._buffer = b""
+                    self._discarding = True
+                else:
+                    self._buffer += part
+            if index < len(parts) - 1 or final:
+                if not self._discarding:
+                    line = self._buffer.decode("utf-8", errors="replace")
+                    if self.on_title is not None:
+                        title = parse_ytdlp_title(line)
+                        if title is not None:
+                            self.on_title(title)
+                    events.extend(parse_ytdlp_record(line))
+                self._buffer = b""
+                self._discarding = False
+        return events

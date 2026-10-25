@@ -1,0 +1,17 @@
+[info] fixture: Downloading 1 format(s): a
+[download] Destination: /tmp/aidm-m15-capture-0vouwn1t/wav/AiDM local fixture [fixture].m4a
+[download] Writing temporary cookies file to "/tmp/tmp83baple8.cookies"
+ *** Download Progress Summary as of Wed Oct  7 12:45:56 2026 *** 
+===============================================================================
+[#5f8d30 0B/27633B(0%) CN:1 DL:16195B ETA:1s]
+FILE: /tmp/aidm-m15-capture-0vouwn1t/wav//./AiDM local fixture [fixture].m4a.part
+-------------------------------------------------------------------------------
+
+[#5f8d30 0B/27633B(0%) CN:1 DL:16195B ETA:1s]
+AIDM_PROGRESS:{"progress":{"status": "finished", "downloaded_bytes": 27633, "total_bytes": 27633, "speed": 26732.701003953585},"info":{"vcodec": "none", "acodec": "mp4a.40.2"}}
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "ExtractAudio"}
+[ExtractAudio] Destination: /tmp/aidm-m15-capture-0vouwn1t/wav/AiDM local fixture [fixture].wav
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "ExtractAudio"}
+Deleting original file /tmp/aidm-m15-capture-0vouwn1t/wav/AiDM local fixture [fixture].m4a (pass -k to keep)
+AIDM_POSTPROCESS:{"status": "started", "postprocessor": "MoveFiles"}
+AIDM_POSTPROCESS:{"status": "finished", "postprocessor": "MoveFiles"}
