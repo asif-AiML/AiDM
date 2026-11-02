@@ -364,9 +364,6 @@ class BatchGuiTests(unittest.TestCase):
                 create_download_process(DownloadJob(kind, urls, str(self.directory), **extra))
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 try:
@@ -488,3 +485,6 @@ class GenericMediaBatchGuiTests(unittest.TestCase):
                 self.app.processEvents()
                 self.assertIsNot(worker.process, process)
         self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+
+if __name__ == '__main__':
+    unittest.main()
