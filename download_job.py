@@ -74,7 +74,9 @@ class DownloadJob:
             supported_proxy = {InputKind.DIRECT_SINGLE, InputKind.GENERIC_YTDLP,
                                InputKind.YOUTUBE_SINGLE, InputKind.HLS, InputKind.DASH}
             route = self.route_kind if self.kind == InputKind.STREAM_INSPECTOR else self.kind
-            if route not in supported_proxy or len(self.urls) != 1 or self.bulk_mode is not None:
+            proxy_generic_batch = route == InputKind.GENERIC_YTDLP and len(self.urls) > 1
+            if (route not in supported_proxy or (len(self.urls) != 1 and not proxy_generic_batch)
+                    or self.bulk_mode is not None):
                 raise ValueError(PROXY_UNSUPPORTED)
         # Filesystem availability belongs to the frontend/execution boundary.
         # Keep a normalized absolute snapshot without probing or creating paths.
@@ -117,7 +119,9 @@ class DownloadJob:
         elif self.route_kind is not None or self.headers or self.subtitles:
             raise ValueError("Browser context and route_kind require an Inspector job")
 
-        bulk = self.kind in {InputKind.YOUTUBE_BULK, InputKind.DIRECT_BULK}
+        bulk = self.kind in {InputKind.YOUTUBE_BULK, InputKind.DIRECT_BULK} or (
+            self.kind == InputKind.GENERIC_YTDLP and len(self.urls) > 1
+        )
         if (bulk and len(self.urls) < 2) or (not bulk and len(self.urls) != 1):
             raise ValueError("Bulk jobs require multiple URLs; other jobs require exactly one input")
         route = self.kind
