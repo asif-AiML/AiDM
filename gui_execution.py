@@ -417,7 +417,7 @@ class GenericDownloadProcess(DownloadProcess):
     owns_process_group = True
 
     def __init__(self, job: DownloadJob, parent=None):
-        if job.kind != InputKind.GENERIC_YTDLP:
+        if job.kind != InputKind.GENERIC_YTDLP and job.proxy is None:
             raise ValueError("Generic execution requires GENERIC_YTDLP")
         super().__init__(job, parent)
         self._index = 1
@@ -431,14 +431,17 @@ class GenericDownloadProcess(DownloadProcess):
         self._next_timer.timeout.connect(self.advance)
 
     def _new_progress_parser(self):
-        return YtDlpProgressParser(self.on_title)
+        return YtDlpProgressParser(
+            self.on_title if self.job.kind == InputKind.GENERIC_YTDLP else None,
+        )
 
     def build_command(self):
         url = self.job.urls[self._index - 1]
         if self.job.proxy is not None:
             return build_proxy_media_command(
                 url, self.job.proxy, self.job.title, self.job.headers,
-                destination=self.job.destination, telemetry=True, resolve_title=True,
+                destination=self.job.destination, telemetry=True,
+                resolve_title=self.job.kind == InputKind.GENERIC_YTDLP,
             )
         return build_ytdlp_media_command(
             url, self.job.title if len(self.job.urls) == 1 else None,
