@@ -322,7 +322,7 @@ class BatchGuiTests(unittest.TestCase):
                            (InputKind.DIRECT_BULK, 'file')):
             self.assertEqual(format_batch_summary(kind, 1), f'1 {noun} downloaded')
             self.assertEqual(format_batch_summary(kind, 4), f'4 {noun}s downloaded')
-        self.assertEqual(format_batch_summary(InputKind.GENERIC_YTDLP, 4), '4 items downloaded')
+        self.assertEqual(format_batch_summary(InputKind.GENERIC_YTDLP, 4), '4 media items downloaded')
         self.assertEqual(format_batch_summary(InputKind.YOUTUBE_PLAYLIST, None), '')
         for kind, count, expected in ((InputKind.DIRECT_BULK, 2, '2 files downloaded'),
                                       (InputKind.YOUTUBE_PLAYLIST, 4, 'YouTube playlist downloaded • 4 videos')):
