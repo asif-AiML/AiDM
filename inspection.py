@@ -96,31 +96,46 @@ def has_stream_inspector_args(args: argparse.Namespace) -> bool:
     )
 
 
-def classify_proxy_input(args: argparse.Namespace) -> InspectionResult:
-    """Local-only special-mode classification; never probe a URL directly.
+def _is_generic_ytdlp_url(url: str) -> bool:
+    """Recognize URL shapes eligible for the yt-dlp fallback, without probing."""
+    try:
+        parsed = urlparse(url)
+        suffix = PurePosixPath(parsed.path).suffix.lower()
+        return (
+            parsed.scheme in {"http", "https"}
+            and bool(parsed.hostname)
+            and not is_youtube_url(url)
+            and suffix not in DIRECT_EXTENSIONS
+            and suffix not in {".m3u8", ".mpd", ".torrent", ".vtt", ".srt", ".ass", ".ssa"}
+        )
+    except ValueError:
+        return False
 
-    Unknown pages are left to proxied yt-dlp extraction. Browser subtitle URLs
-    remain context only; special-mode execution never launches a sidecar.
-    """
+
+def classify_proxy_input(args: argparse.Namespace) -> InspectionResult:
+    """Classify proxy-safe inputs locally; never probe a URL directly."""
     urls = list(args.urls)
     rejected = InspectionResult(InputKind.UNSUPPORTED, urls, error=PROXY_UNSUPPORTED)
-    if len(urls) != 1:
-        return rejected
-    try:
-        parsed = urlparse(urls[0])
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    if not urls or any(not _is_generic_ytdlp_url(url) for url in urls):
+        if len(urls) != 1:
             return rejected
-        suffix = PurePosixPath(parsed.path).suffix.lower()
-        if is_youtube_playlist_url(urls[0]) or suffix in {".torrent", ".vtt", ".srt", ".ass", ".ssa"}:
+        try:
+            parsed = urlparse(urls[0])
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                return rejected
+            suffix = PurePosixPath(parsed.path).suffix.lower()
+            if is_youtube_playlist_url(urls[0]) or suffix in {".torrent", ".vtt", ".srt", ".ass", ".ssa"}:
+                return rejected
+        except ValueError:
             return rejected
-    except ValueError:
-        return rejected
-    # Single website URLs use the simple yt-dlp workflow, without normal-mode
-    # quality/metadata discovery. No additional network worker is needed.
-    kind = {".m3u8": InputKind.HLS, ".mpd": InputKind.DASH}.get(suffix)
-    if kind is None:
-        kind = InputKind.DIRECT_SINGLE if suffix in DIRECT_EXTENSIONS else InputKind.GENERIC_YTDLP
+        kind = {".m3u8": InputKind.HLS, ".mpd": InputKind.DASH}.get(suffix)
+        if kind is None:
+            kind = InputKind.DIRECT_SINGLE if suffix in DIRECT_EXTENSIONS else InputKind.GENERIC_YTDLP
+    else:
+        kind = InputKind.GENERIC_YTDLP
     assisted = has_stream_inspector_args(args)
+    if assisted and len(urls) != 1:
+        return rejected
     stream = build_stream_input_from_args(args, urls[0]) if assisted else None
     return InspectionResult(InputKind.STREAM_INSPECTOR if assisted else kind, urls,
                             stream=stream, route_kind=kind if assisted else None)
@@ -147,8 +162,10 @@ def classify_input(args: argparse.Namespace) -> InspectionResult:
         ]
         if all(direct_urls):
             return InspectionResult(InputKind.DIRECT_BULK, urls)
+        if all(_is_generic_ytdlp_url(url) for url in urls):
+            return InspectionResult(InputKind.GENERIC_YTDLP, urls)
         return InspectionResult(InputKind.MIXED_BULK, urls, error=
-            "Error: bulk mode supports only all-YouTube or all-direct URLs; "
+            "Error: bulk mode supports only all-YouTube, all-direct, or all-generic media URLs; "
             "mixed batches are unsupported.")
 
     raw_input = urls[0]
