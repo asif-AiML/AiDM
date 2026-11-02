@@ -16,7 +16,8 @@ def prepare_metadata(result: InspectionResult) -> InspectionResult:
         # The browser handoff is authoritative, including an absent title.
         return replace(result, title=result.stream.title if result.stream else None,
                        metadata_status=MetadataStatus.NOT_REQUESTED)
-    if result.route in {InputKind.YOUTUBE_BULK, InputKind.DIRECT_BULK}:
+    if result.route in {InputKind.YOUTUBE_BULK, InputKind.DIRECT_BULK} or (
+            result.route == InputKind.GENERIC_YTDLP and len(result.urls) > 1):
         return replace(result, item_count=len(result.urls), metadata_status=MetadataStatus.AVAILABLE)
     if result.route == InputKind.DIRECT_SINGLE:
         # Intentionally untitled before execution; aria2c will resolve the name.
