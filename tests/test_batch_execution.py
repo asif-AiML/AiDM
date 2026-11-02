@@ -366,3 +366,125 @@ class BatchGuiTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+try:
+    from PySide6.QtCore import QProcess
+    from PySide6.QtWidgets import QApplication
+    from aidm import parse_args
+    from download_job import build_download_job
+    from gui_execution import GenericDownloadProcess
+    from inspection import classify_input, classify_proxy_input
+    from metadata import prepare_metadata
+    from proxy_settings import ProxyEndpoint
+    import test_gui_execution as gui_tests
+except ImportError:
+    gui_tests = None
+
+
+@unittest.skipIf(gui_tests is None, 'Requires PySide6')
+class GenericMediaBatchGuiTests(unittest.TestCase):
+    if gui_tests is not None:
+        setUp = gui_tests.GuiExecutionTests.setUp
+        tearDown = gui_tests.GuiExecutionTests.tearDown
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def classify_generic_batch(self, *, proxy=False):
+        urls = ['https://media.example/watch/one', 'https://media.example/watch/two']
+        args = parse_args(urls)
+        with patch('inspection.looks_like_direct_file', return_value=False):
+            result = classify_proxy_input(args) if proxy else classify_input(args)
+        self.assertEqual(result.kind, InputKind.GENERIC_YTDLP)
+        return result
+
+    def start_generic_batch(self, *, proxy=False):
+        result = self.classify_generic_batch(proxy=proxy)
+        result = prepare_metadata(result)
+        endpoint = ProxyEndpoint('127.0.0.1', 1080) if proxy else None
+        job = build_download_job(
+            result, destination=str(self.directory), settings=None, proxy=endpoint,
+        )
+        worker = GenericDownloadProcess(job, self.window)
+        self.window.inspection_result = result
+        self.window.download_job = job
+        self.window._download_process = worker
+        worker.status_event.connect(self.window.on_download_status)
+        worker.progress_event.connect(self.window.on_download_progress)
+        worker.batch_event.connect(self.window.on_batch_event)
+        worker.filename_resolved.connect(self.window.on_filename_resolved)
+        worker.finished.connect(self.window.on_download_finished)
+        self.window.set_state(GuiState.DOWNLOADING)
+        worker.start()
+        return worker
+
+    def feed(self, worker, payload):
+        worker.process.stdout = payload
+        worker.process.readyReadStandardOutput.emit()
+
+    def test_generic_url_lists_classify_and_proxy_restrictions_stay_narrow(self):
+        urls = ['https://media.example/watch/one', 'https://media.example/watch/two']
+        args = parse_args(urls)
+        with patch('inspection.looks_like_direct_file', return_value=False):
+            normal = classify_input(args)
+            proxied = classify_proxy_input(args)
+        self.assertEqual(normal.kind, InputKind.GENERIC_YTDLP)
+        self.assertEqual(proxied.kind, InputKind.GENERIC_YTDLP)
+        self.assertEqual(prepare_metadata(normal).item_count, 2)
+        proxy = ProxyEndpoint('127.0.0.1', 1080)
+        job = build_download_job(prepare_metadata(proxied), destination=str(self.directory), proxy=proxy)
+        self.assertEqual(job.urls, tuple(urls))
+        for rejected in (
+            ['https://media.example/watch/one', 'https://media.example/file.zip'],
+            ['https://media.example/watch/one', 'https://media.example/stream.m3u8'],
+        ):
+            with patch('inspection.looks_like_direct_file', return_value=False):
+                result = classify_proxy_input(parse_args(rejected))
+            self.assertEqual(result.kind, InputKind.UNSUPPORTED)
+
+    def test_sequential_generic_progress_titles_and_success_summary(self):
+        worker = self.start_generic_batch()
+        self.assertIsInstance(worker, GenericDownloadProcess)
+        self.assertEqual(worker.process.calls[0][0], 'yt-dlp')
+        self.assertEqual(worker.process.calls[0][1][-1], worker.job.urls[0])
+        self.assertEqual(self.window.queue_position.text(), '1 / 2')
+        worker.process.begin()
+        self.feed(worker, b'AIDM_TITLE:{"title":"First media"}\\n')
+        self.feed(worker, b'AIDM_PROGRESS:{"progress":{"status":"downloading","downloaded_bytes":80,"total_bytes":100},"info":{}}\\n')
+        self.assertEqual(self.window.media_title.text(), 'First media')
+        self.assertEqual(self.window.progress.value(), 40)
+        self.assertEqual(self.window.active_status.text(), 'Downloading item 1 of 2… ⬇️')
+        first_process = worker.process
+        first_process.finish()
+        self.app.processEvents()
+        self.assertIsNot(worker.process, first_process)
+        self.assertEqual(worker.process.calls[0][1][-1], worker.job.urls[1])
+        self.assertEqual(self.window.queue_position.text(), '2 / 2')
+        self.assertEqual(self.window.progress.value(), 50)
+        self.assertTrue(self.window.statistics.isHidden())
+        worker.process.begin()
+        self.feed(worker, b'AIDM_TITLE:{"title":"Second media"}\\n')
+        self.feed(worker, b'AIDM_PROGRESS:{"progress":{"status":"downloading","downloaded_bytes":50,"total_bytes":100},"info":{}}\\n')
+        self.assertEqual(self.window.media_title.text(), 'Second media')
+        self.assertEqual(self.window.progress.value(), 75)
+        worker.process.finish()
+        self.assertEqual(self.window.current_state, GuiState.COMPLETE)
+        self.assertEqual(self.window.batch_summary.text(), '2 media items downloaded')
+        self.assertEqual(self.window._batch_event.aggregate_percent, 100)
+
+    def test_proxy_generic_batch_uses_one_proxied_process_per_url(self):
+        worker = self.start_generic_batch(proxy=True)
+        for index, url in enumerate(worker.job.urls):
+            process = worker.process
+            program, args = process.calls[0]
+            self.assertEqual(program, 'yt-dlp')
+            self.assertEqual(args[-1], url)
+            self.assertIn('--proxy', args)
+            process.finish()
+            if index == 0:
+                self.app.processEvents()
+                self.assertIsNot(worker.process, process)
+        self.assertEqual(self.window.current_state, GuiState.COMPLETE)
