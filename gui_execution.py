@@ -411,52 +411,137 @@ class DirectBulkDownloadProcess(DownloadProcess):
 
 
 class GenericDownloadProcess(DownloadProcess):
-    """Let yt-dlp extract an unverified URL using the existing transfer policy."""
+    """Sequential yt-dlp fallback for one or more generic media URLs."""
 
     engine = "yt-dlp"
     owns_process_group = True
 
     def __init__(self, job: DownloadJob, parent=None):
-        if job.kind != InputKind.GENERIC_YTDLP and job.proxy is None:
+        if job.kind != InputKind.GENERIC_YTDLP:
             raise ValueError("Generic execution requires GENERIC_YTDLP")
         super().__init__(job, parent)
+        self._index = 1
+        self._between_items = False
+        self._batch = SequentialBatchProgress(len(job.urls)) if len(job.urls) > 1 else None
         self._runtime_title = None
-        self._progress_parser = YtDlpProgressParser(
-            self.on_title if job.kind == InputKind.GENERIC_YTDLP else None,
-        )
+        self._progress_parser = self._new_progress_parser()
         self._last_status = None
+        self._next_timer = QTimer(self)
+        self._next_timer.setSingleShot(True)
+        self._next_timer.timeout.connect(self.advance)
+
+    def _new_progress_parser(self):
+        return YtDlpProgressParser(self.on_title)
 
     def build_command(self):
+        url = self.job.urls[self._index - 1]
         if self.job.proxy is not None:
             return build_proxy_media_command(
-                self.job.urls[0], self.job.proxy, self.job.title, self.job.headers,
-                destination=self.job.destination, telemetry=True,
-                resolve_title=self.job.kind == InputKind.GENERIC_YTDLP,
+                url, self.job.proxy, self.job.title, self.job.headers,
+                destination=self.job.destination, telemetry=True, resolve_title=True,
             )
         return build_ytdlp_media_command(
-            self.job.urls[0], self.job.title,
+            url, self.job.title if len(self.job.urls) == 1 else None,
             destination=self.job.destination, telemetry=True,
-            settings=self.job.settings,
-            resolve_title=True,
+            settings=self.job.settings, resolve_title=True,
         )
+
+    def start(self):
+        if self.active or self.done or self.closing:
+            return
+        if self._batch is not None:
+            self.batch_event.emit(self._batch.start_item(ItemStarted(self._index)))
+        try:
+            super().start()
+        except OSError as error:
+            self.stderr_tail = str(error).encode()[-self.MAX_STDERR_BYTES:]
+            self.complete(ExecutionOutcome.FAILED, StatusReason.START_FAILED)
 
     def on_title(self, title):
         if (not self.done and not self.closing and not self.abort_requested
                 and title != self._runtime_title):
             self._runtime_title = title
-            # The existing runtime identity signal updates the shared title area
-            # without changing the immutable job or its output filename policy.
             self.filename_resolved.emit(title)
+            if self._batch is not None:
+                batch = self._batch.start_item(ItemStarted(self._index, title))
+                if batch is not None:
+                    self.batch_event.emit(batch)
 
     def consume_stdout(self, chunk, *, final=False):
         for event in self._progress_parser.feed(chunk, final=final):
             if self.done or self.closing or self.abort_requested:
                 break
             if isinstance(event, ProgressEvent):
+                if self._batch is not None:
+                    batch = self._batch.progress(event.percent)
+                    if batch is not None:
+                        self.batch_event.emit(batch)
                 self.progress_event.emit(event)
-            elif isinstance(event, StatusEvent) and event != self._last_status:
-                self._last_status = event
-                self.status_event.emit(event)
+            elif isinstance(event, StatusEvent):
+                if event.kind in {StatusKind.DOWNLOADING, StatusKind.DOWNLOADING_VIDEO,
+                                  StatusKind.DOWNLOADING_AUDIO} and self._batch is not None:
+                    event = StatusEvent(StatusKind.DOWNLOADING, self.engine)
+                if event != self._last_status:
+                    self._last_status = event
+                    self.status_event.emit(event)
+
+    def complete(self, outcome, reason=None):
+        if self.done:
+            return
+        if not self.closing and self.abort_requested:
+            outcome = ExecutionOutcome.ABORTED
+        if not self.closing and outcome == ExecutionOutcome.COMPLETE and self._batch is not None:
+            batch = self._batch.progress(100)
+            if batch is not None:
+                self.batch_event.emit(batch)
+            if self._index < len(self.job.urls):
+                self.clear_process_tracking()
+                self._between_items = True
+                if not self.abort_requested:
+                    self._next_timer.start(0)
+                return
+            batch = self._batch.complete()
+            if batch is not None:
+                self.batch_event.emit(batch)
+        self._next_timer.stop()
+        super().complete(outcome, reason)
+
+    def advance(self):
+        if self.done or self.closing or not self._between_items:
+            return
+        if self.abort_requested:
+            self.complete(ExecutionOutcome.ABORTED)
+            return
+        self._between_items = False
+        self._index += 1
+        self._runtime_title = None
+        self._last_status = None
+        self._progress_parser = self._new_progress_parser()
+        self.stderr_tail = b""
+        previous = self.process
+        self._process_events_enabled = False
+        self.create_process()
+        previous.deleteLater()
+        self.progress_event.emit(ProgressEvent())
+        self.batch_event.emit(self._batch.start_item(ItemStarted(self._index)))
+        self.status_event.emit(StatusEvent(StatusKind.STARTING_ENGINE, self.engine))
+        if self.abort_requested or self.closing or self.done:
+            if self.abort_requested and not self.closing:
+                self.complete(ExecutionOutcome.ABORTED)
+            return
+        command = self.build_command()
+        self.process.start(command[0], command[1:])
+
+    def abort(self):
+        super().abort()
+        if self._between_items and self.abort_requested and not self.closing:
+            self.complete(ExecutionOutcome.ABORTED)
+
+    def shutdown(self):
+        stopped = super().shutdown()
+        if stopped:
+            self._next_timer.stop()
+        return stopped
 
 
 class StreamInspectorDownloadProcess(DownloadProcess):
