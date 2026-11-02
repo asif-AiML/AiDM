@@ -64,6 +64,7 @@ def format_batch_summary(kind: InputKind, count: int | None) -> str:
         InputKind.YOUTUBE_BULK: "video",
         InputKind.YOUTUBE_PLAYLIST: "video",
         InputKind.DIRECT_BULK: "file",
+        InputKind.GENERIC_YTDLP: "media item",
     }.get(kind, "item")
     return f"{count} {noun}{'' if count == 1 else 's'} downloaded"
 
@@ -1003,7 +1004,7 @@ class AiDMWindow(QMainWindow):
         self.job_title.setAlignment(Qt.AlignmentFlag.AlignCenter if terminal else self._media_title_alignment)
         self.job_title.set_identity(primary_title or "", True)
         self.job_title.setVisible(has_details and bool(primary_title))
-        bulk_kinds = {InputKind.YOUTUBE_BULK, InputKind.DIRECT_BULK}
+        bulk_kinds = {InputKind.YOUTUBE_BULK, InputKind.DIRECT_BULK, InputKind.GENERIC_YTDLP}
         terminal_batch = terminal and (
             identity_kind in bulk_kinds | {InputKind.YOUTUBE_PLAYLIST} or batch is not None
         )
